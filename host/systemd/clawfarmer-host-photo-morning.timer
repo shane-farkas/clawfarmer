@@ -1,0 +1,10 @@
+[Unit]
+Description=clawfarmer morning photo (08:00 local)
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Unit=clawfarmer-host-tick@photo.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

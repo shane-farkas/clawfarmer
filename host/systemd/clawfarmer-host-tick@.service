@@ -1,0 +1,23 @@
+[Unit]
+Description=clawfarmer host tick (%I)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=openclaw
+Group=openclaw
+Environment=HOME=/var/lib/openclaw
+Environment=CLAWFARMER_WORKSPACE=/var/lib/openclaw/.openclaw/workspace-plant
+Environment=PI_HOST=clawpi.local
+Environment=PI_USER=pi
+Environment=PI_KEY=/var/lib/openclaw/.ssh/id_ed25519_plantpi
+Environment=JETSON_HOST=orin-nano.local
+Environment=JETSON_USER=shane
+Environment=JETSON_KEY=/var/lib/openclaw/.ssh/id_ed25519_plantjetson
+Environment=SOIL_CHANNEL=0
+Environment=SOIL_DRY_RAW=26000
+Environment=SOIL_WET_RAW=12000
+ExecStart=/usr/local/bin/clawfarmer-host-tick %I
+StandardOutput=journal
+StandardError=journal
