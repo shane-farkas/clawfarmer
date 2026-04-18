@@ -25,31 +25,32 @@ Pick the one set by `sensor_transport:` in `TOOLS.md`.
 
 Each reading is a small Python one-liner shelled over SSH.
 
+You run as the `openclaw` service user — do **not** prefix with `sudo -u openclaw`, that's a no-op with no sudoers rule and will fail. Always use the absolute venv path `~/clawfarmer-venv/bin/python3` on the remote side because non-interactive SSH does not source `~/.bashrc` on Raspberry Pi OS or Ubuntu.
+
 ```bash
 # soil moisture (0–100 after calibration)
-sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -m clawfarmer_pi read-soil --channel {{SOIL_MOISTURE_ADC_CHANNEL}}"
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-soil --channel {{SOIL_MOISTURE_ADC_CHANNEL}}"
 
 # temperature + humidity + pressure (BME280)
-sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -m clawfarmer_pi read-bme280"
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-bme280"
 
 # ambient light (BH1750, lux)
-sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -m clawfarmer_pi read-lux"
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-lux"
 
-# photo capture on the Jetson (Pi Cam over CSI)
-sudo -u openclaw ssh -i {{JETSON_SSH_KEY_PATH}} {{JETSON_USER}}@{{JETSON_HOST}} \
-  "python3 -m clawfarmer_jetson.capture --device {{CAMERA_DEVICE}} \
-   --resolution {{CAMERA_RESOLUTION}} --out {{PHOTO_OUTPUT_DIR}}"
+# photo capture on the Jetson (Arducam IMX477 over CSI)
+ssh -i {{JETSON_SSH_KEY_PATH}} {{JETSON_USER}}@{{JETSON_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_jetson capture --out {{PHOTO_OUTPUT_DIR}}"
 
 # pull the photo back to the host
-sudo -u openclaw scp -i {{JETSON_SSH_KEY_PATH}} \
+scp -i {{JETSON_SSH_KEY_PATH}} \
   {{JETSON_USER}}@{{JETSON_HOST}}:{{PHOTO_OUTPUT_DIR}}/*.jpg \
   {{PHOTO_SYNC_DIR}}/
 ```
 
-The `clawfarmer_pi` package ships with this repo under `pi/` — see `pi/README.md` for install. Each subcommand prints a single JSON object on stdout. The `clawfarmer_jetson` helper is a separate follow-up (covered once the Jetson is set up).
+The `clawfarmer_pi` and `clawfarmer_jetson` packages ship with this repo. Each subcommand prints a single JSON object on stdout. The camera lives on the Jetson over CSI — there is no local camera on the OpenClaw host; do not try `ls /dev/video*` on the host and do not try to fall back to a USB camera.
 
 ### MQTT transport
 
