@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawfarmer-jetson"
+version = "0.1.0"
+description = "Jetson-side camera capture helper for the clawfarmer OpenClaw pack."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+clawfarmer-jetson = "clawfarmer_jetson.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["clawfarmer_jetson*"]
