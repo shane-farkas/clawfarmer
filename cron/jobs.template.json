@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "note": "Template only. Create fresh jobs in the target environment rather than copying IDs or runtime state. Tick type is carried in the payload text so HEARTBEAT.md can dispatch.",
+  "jobs": [
+    {
+      "name": "Sensor sweep",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "main",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "systemEvent",
+        "text": "sensor-sweep. Use the plant-monitor skill. Read every sensor, update memory/sensor-state.json, and only message the operator if a new or worsening detection needs attention."
+      }
+    },
+    {
+      "name": "Care decision",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "main",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "systemEvent",
+        "text": "care-decision. Use the plant-care skill. Evaluate watering, grow-light, and fan based on the latest memory/sensor-state.json. Honor cooldowns and the read_only flag in TOOLS.md."
+      }
+    },
+    {
+      "name": "Grow-light check",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "main",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "systemEvent",
+        "text": "grow-light-check. Use the plant-care skill. Align the grow-light relay with the configured on/off window in TOOLS.md. Do nothing if the state already matches."
+      }
+    },
+    {
+      "name": "Morning photo",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "main",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "systemEvent",
+        "text": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json. Do not analyze it yet — the daily-log tick will."
+      }
+    },
+    {
+      "name": "Evening photo",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 19 * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "main",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "systemEvent",
+        "text": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json."
+      }
+    },
+    {
+      "name": "Daily growth log",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 21 * * *",
+        "tz": "{{TIMEZONE}}"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "daily-log. Use the plant-monitor skill. Summarize today's readings, analyze the latest photo using the observation cues in AGENTS.md, and append one dated entry to memory/growth-log.md. Message the operator only if a new failure mode was detected.",
+        "thinking": "medium",
+        "timeoutSeconds": 600
+      },
+      "delivery": {
+        "mode": "none"
+      }
+    }
+  ]
+}

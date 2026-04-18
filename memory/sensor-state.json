@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "updated_at": null,
+  "readings": {
+    "soil_moisture": {"value": null, "unit": "pct_vwc", "at": null, "stale": true},
+    "temp_f": {"value": null, "unit": "fahrenheit", "at": null, "stale": true},
+    "humidity_pct": {"value": null, "unit": "pct_rh", "at": null, "stale": true},
+    "lux": {"value": null, "unit": "lux", "at": null, "stale": true}
+  },
+  "day_ranges": {
+    "soil_moisture": {"min": null, "max": null, "window_start": null},
+    "temp_f": {"min": null, "max": null, "window_start": null},
+    "humidity_pct": {"min": null, "max": null, "window_start": null}
+  },
+  "grow_light": {"state": "unknown", "last_toggled_at": null},
+  "watering_history": [],
+  "last_photo": {"filename": null, "at": null},
+  "active_detections": [],
+  "last_errors": []
+}
