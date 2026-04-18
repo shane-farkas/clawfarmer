@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Template only. Create fresh jobs in the target environment rather than copying IDs or runtime state. Tick type is carried in the payload text so HEARTBEAT.md can dispatch.",
+  "note": "Template only. Create fresh jobs in the target environment rather than copying IDs or runtime state. Tick type is carried in the payload text so HEARTBEAT.md can dispatch. All jobs use sessionTarget=isolated + payload.kind=agentTurn because OpenClaw rejects sessionTarget=main for non-default agents.",
   "jobs": [
     {
       "name": "Sensor sweep",
@@ -10,11 +10,16 @@
         "expr": "*/15 * * * *",
         "tz": "{{TIMEZONE}}"
       },
-      "sessionTarget": "main",
+      "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
-        "kind": "systemEvent",
-        "text": "sensor-sweep. Use the plant-monitor skill. Read every sensor, update memory/sensor-state.json, and only message the operator if a new or worsening detection needs attention."
+        "kind": "agentTurn",
+        "message": "sensor-sweep. Use the plant-monitor skill. Read every sensor, update memory/sensor-state.json, and only message the operator if a new or worsening detection needs attention.",
+        "thinking": "medium",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "none"
       }
     },
     {
@@ -25,11 +30,16 @@
         "expr": "*/15 * * * *",
         "tz": "{{TIMEZONE}}"
       },
-      "sessionTarget": "main",
+      "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
-        "kind": "systemEvent",
-        "text": "care-decision. Use the plant-care skill. Evaluate watering, grow-light, and fan based on the latest memory/sensor-state.json. Honor cooldowns and the read_only flag in TOOLS.md."
+        "kind": "agentTurn",
+        "message": "care-decision. Use the plant-care skill. Evaluate watering, grow-light, and fan based on the latest memory/sensor-state.json. Honor cooldowns and the read_only flag in TOOLS.md.",
+        "thinking": "medium",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "none"
       }
     },
     {
@@ -40,11 +50,16 @@
         "expr": "0 * * * *",
         "tz": "{{TIMEZONE}}"
       },
-      "sessionTarget": "main",
+      "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
-        "kind": "systemEvent",
-        "text": "grow-light-check. Use the plant-care skill. Align the grow-light relay with the configured on/off window in TOOLS.md. Do nothing if the state already matches."
+        "kind": "agentTurn",
+        "message": "grow-light-check. Use the plant-care skill. Align the grow-light relay with the configured on/off window in TOOLS.md. Do nothing if the state already matches.",
+        "thinking": "medium",
+        "timeoutSeconds": 120
+      },
+      "delivery": {
+        "mode": "none"
       }
     },
     {
@@ -55,11 +70,16 @@
         "expr": "0 8 * * *",
         "tz": "{{TIMEZONE}}"
       },
-      "sessionTarget": "main",
+      "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
-        "kind": "systemEvent",
-        "text": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json. Do not analyze it yet — the daily-log tick will."
+        "kind": "agentTurn",
+        "message": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json. Do not analyze it yet — the daily-log tick will.",
+        "thinking": "medium",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "none"
       }
     },
     {
@@ -70,11 +90,16 @@
         "expr": "0 19 * * *",
         "tz": "{{TIMEZONE}}"
       },
-      "sessionTarget": "main",
+      "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
-        "kind": "systemEvent",
-        "text": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json."
+        "kind": "agentTurn",
+        "message": "photo-capture. Use the plant-monitor skill. Capture a photo and record it in memory/sensor-state.json.",
+        "thinking": "medium",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "none"
       }
     },
     {
