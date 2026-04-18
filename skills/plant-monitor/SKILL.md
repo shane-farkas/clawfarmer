@@ -84,22 +84,58 @@ Emit synthetic readings — soil moisture walks a slow random walk down to the w
 
 Use this transport for first install so the whole pipeline can be exercised before hardware arrives.
 
+## Where the hardware actually lives (read this before every run)
+
+- **Sensors are on the Raspberry Pi** at `{{PI_HOST}}`, accessed via SSH.
+- **The camera is on the Jetson** at `{{JETSON_HOST}}`, accessed via SSH.
+- **Nothing is on the OpenClaw host.** Do not run `ls /dev/video*`, `v4l2-ctl`, `raspistill`, `imagesnap`, `gphoto2`, `ffmpeg`, or any other local-hardware probe on this host. They will all fail because the peripherals do not live here. The only supported paths are the SSH commands below.
+
 ## Sensor-sweep workflow
 
-1. Read all three sensors. Run them in parallel where the transport allows.
-2. If a read fails, record it under `last_errors[]` in `memory/sensor-state.json` with the sensor name + error string + timestamp. Do not fail the whole sweep — use the prior value (flagged `stale: true`) for anomaly detection.
-3. Write the fresh readings into `memory/sensor-state.json` (see schema below).
-4. Run anomaly detection (see below).
-5. If any anomaly is new or worsening, surface it to `{{PRIMARY_UPDATE_CHANNEL}} -> {{PRIMARY_UPDATE_TARGET}}` with the reading, the threshold, and the recommended action.
-6. If nothing is anomalous and nothing changed materially, stay silent — return `HEARTBEAT_OK`.
+Run these three commands. They each print one JSON line; parse the values into `memory/sensor-state.json`.
+
+```bash
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-soil --channel {{SOIL_MOISTURE_ADC_CHANNEL}} --dry-raw {{SOIL_MOISTURE_DRY_RAW}} --wet-raw {{SOIL_MOISTURE_WET_RAW}}"
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-bme280"
+ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_pi read-lux"
+```
+
+Then:
+1. If a read fails (non-zero exit, or JSON has `"ok": false`), record it under `last_errors[]` in `memory/sensor-state.json` with the sensor name + error string + timestamp. Do not fail the whole sweep — use the prior value (flagged `stale: true`) for anomaly detection.
+2. Write the fresh readings into `memory/sensor-state.json` (see schema below).
+3. Run anomaly detection (see below).
+4. If any anomaly is new or worsening, surface it to `{{PRIMARY_UPDATE_CHANNEL}} -> {{PRIMARY_UPDATE_TARGET}}` with the reading, the threshold, and the recommended action.
+5. If nothing is anomalous and nothing changed materially, stay silent — return `HEARTBEAT_OK`.
 
 ## Photo-capture workflow
 
-1. Trigger the camera via the active transport.
-2. Wait up to 30 seconds for the file to land in `{{PHOTO_SYNC_DIR}}`.
-3. If no file arrives, log it under `last_errors[]` and move on.
-4. Note the photo filename + capture timestamp under `last_photo` in `memory/sensor-state.json`.
-5. Do not analyze the photo here — the `daily-log` tick handles photo-based observation.
+Run exactly these two commands, in order. The camera is on the Jetson, not this host.
+
+**1) Trigger capture on the Jetson:**
+
+```bash
+ssh -i {{JETSON_SSH_KEY_PATH}} {{JETSON_USER}}@{{JETSON_HOST}} \
+  "~/clawfarmer-venv/bin/python3 -m clawfarmer_jetson capture --out {{PHOTO_OUTPUT_DIR}}"
+```
+
+This returns one JSON line like `{"ok":true,"filename":"2026-04-18T15-42-17.jpg","path":"/var/lib/clawfarmer/photos/2026-04-18T15-42-17.jpg","size_bytes":1780646,"at":"..."}`. Parse the `filename` and `at` fields.
+
+**2) Pull the photo back to the OpenClaw workspace:**
+
+```bash
+scp -i {{JETSON_SSH_KEY_PATH}} \
+  {{JETSON_USER}}@{{JETSON_HOST}}:{{PHOTO_OUTPUT_DIR}}/<filename from step 1> \
+  {{PHOTO_SYNC_DIR}}/
+```
+
+**3) Update `memory/sensor-state.json`:** set `last_photo.filename` to the filename and `last_photo.at` to the `at` timestamp from step 1's JSON.
+
+**4)** Do not analyze the photo here — the `daily-log` tick handles photo-based observation.
+
+If step 1's JSON has `"ok": false`, or step 2's scp fails, record the error under `last_errors[]` in `memory/sensor-state.json` and stay silent — do not surface to the operator unless the camera has failed 3 days in a row (see HEARTBEAT.md). Do **not** fall back to a local camera search — there is no local camera.
 
 ## Daily-log workflow
 
