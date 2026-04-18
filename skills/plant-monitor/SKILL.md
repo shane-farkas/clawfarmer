@@ -28,17 +28,17 @@ Each reading is a small Python one-liner shelled over SSH.
 ```bash
 # soil moisture (0–100 after calibration)
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import read_soil; print(read_soil({{SOIL_MOISTURE_ADC_CHANNEL}}))'"
+  "python3 -m clawfarmer_pi read-soil --channel {{SOIL_MOISTURE_ADC_CHANNEL}}"
 
-# temperature + humidity (DHT22)
+# temperature + humidity + pressure (BME280)
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import read_dht; print(read_dht({{TEMP_HUMIDITY_GPIO_PIN}}))'"
+  "python3 -m clawfarmer_pi read-bme280"
 
-# ambient light (lux)
+# ambient light (BH1750, lux)
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import read_lux; print(read_lux({{LIGHT_SENSOR_I2C_ADDR}}))'"
+  "python3 -m clawfarmer_pi read-lux"
 
-# photo capture on the Jetson
+# photo capture on the Jetson (Pi Cam over CSI)
 sudo -u openclaw ssh -i {{JETSON_SSH_KEY_PATH}} {{JETSON_USER}}@{{JETSON_HOST}} \
   "python3 -m clawfarmer_jetson.capture --device {{CAMERA_DEVICE}} \
    --resolution {{CAMERA_RESOLUTION}} --out {{PHOTO_OUTPUT_DIR}}"
@@ -49,7 +49,7 @@ sudo -u openclaw scp -i {{JETSON_SSH_KEY_PATH}} \
   {{PHOTO_SYNC_DIR}}/
 ```
 
-The `clawfarmer_pi` and `clawfarmer_jetson` Python helpers are out of scope for this pack — install them on the devices as part of the hardware setup. Each helper should print JSON on stdout (for readings) or exit 0 with the file written (for the camera).
+The `clawfarmer_pi` package ships with this repo under `pi/` — see `pi/README.md` for install. Each subcommand prints a single JSON object on stdout. The `clawfarmer_jetson` helper is a separate follow-up (covered once the Jetson is set up).
 
 ### MQTT transport
 

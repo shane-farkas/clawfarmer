@@ -38,22 +38,22 @@ Same dispatch as `plant-monitor`: the `sensor_transport` knob in `TOOLS.md` sele
 ### SSH transport
 
 ```bash
-# water pump: on for N seconds, then off
+# water pump: on for N seconds, then off (MOSFET, active-high)
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import pulse_relay; \
-   pulse_relay({{WATER_PUMP_GPIO_PIN}}, {{WATER_PUMP_DURATION_SECONDS}})'"
+  "python3 -m clawfarmer_pi pulse-pump \
+     --pin {{WATER_PUMP_GPIO_PIN}} --duration {{WATER_PUMP_DURATION_SECONDS}}"
 
 # grow light on / off
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import set_relay; set_relay({{GROW_LIGHT_GPIO_PIN}}, True)'"
+  "python3 -m clawfarmer_pi set-relay --pin {{GROW_LIGHT_GPIO_PIN}} --state on"
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import set_relay; set_relay({{GROW_LIGHT_GPIO_PIN}}, False)'"
+  "python3 -m clawfarmer_pi set-relay --pin {{GROW_LIGHT_GPIO_PIN}} --state off"
 
 # fan on / off
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import set_relay; set_relay({{FAN_GPIO_PIN}}, True)'"
+  "python3 -m clawfarmer_pi set-relay --pin {{FAN_GPIO_PIN}} --state on"
 sudo -u openclaw ssh -i {{PI_SSH_KEY_PATH}} {{PI_USER}}@{{PI_HOST}} \
-  "python3 -c 'from clawfarmer_pi import set_relay; set_relay({{FAN_GPIO_PIN}}, False)'"
+  "python3 -m clawfarmer_pi set-relay --pin {{FAN_GPIO_PIN}} --state off"
 ```
 
 ### MQTT transport

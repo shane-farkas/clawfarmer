@@ -63,31 +63,39 @@ The openclaw service user must have those keys readable (check `sudo -u openclaw
 
 ## Raspberry Pi — sensors and actuators
 
-Pin assignments are BCM numbering unless stated otherwise.
+Everything sensor-side is I²C on bus 1. The pump is switched by a logic-level MOSFET driven directly off a GPIO pin. Pin numbers are BCM.
 
-### Sensors
+### Sensors (I²C bus 1)
 
-- Soil moisture (capacitive, via MCP3008 ADC):
-  - SPI bus: 0
-  - ADC channel: `{{SOIL_MOISTURE_ADC_CHANNEL}}`
-  - Calibration — dry reading: `{{SOIL_MOISTURE_DRY_RAW}}`
-  - Calibration — wet reading: `{{SOIL_MOISTURE_WET_RAW}}`
+- Soil moisture — capacitive probe through an ADS1115 ADC:
+  - ADS1115 address: `{{ADS1115_I2C_ADDR}}` (default `0x48`)
+  - ADC channel: `{{SOIL_MOISTURE_ADC_CHANNEL}}` (0–3)
+  - Calibration — dry reading (raw int16, probe in air): `{{SOIL_MOISTURE_DRY_RAW}}`
+  - Calibration — wet reading (raw int16, probe in water): `{{SOIL_MOISTURE_WET_RAW}}`
   - Normalized output: 0 (bone dry) → 100 (saturated)
-- Temperature + humidity (DHT22):
-  - Data GPIO: `{{TEMP_HUMIDITY_GPIO_PIN}}`
-  - Units: °F for temp, % RH for humidity
-- Ambient light (BH1750 over I²C):
-  - I²C bus: 1
-  - Address: `{{LIGHT_SENSOR_I2C_ADDR}}`
+- Temperature + humidity + pressure (BME280):
+  - Address: `{{BME280_I2C_ADDR}}` (default `0x76`, alt `0x77`)
+  - Units: °F for temp, % RH for humidity, hPa for pressure
+  - Pressure is logged but not currently used for care decisions
+- Ambient light (BH1750):
+  - Address: `{{LIGHT_SENSOR_I2C_ADDR}}` (default `0x23`, alt `0x5C`)
   - Units: lux
 
 ### Actuators
 
-All relay outputs are active-low unless the wired board says otherwise.
-
-- Water pump relay: GPIO `{{WATER_PUMP_GPIO_PIN}}`
-- Grow-light relay: GPIO `{{GROW_LIGHT_GPIO_PIN}}`
+- Water pump (12V peristaltic dosing, via logic-level N-channel MOSFET):
+  - Gate GPIO: `{{WATER_PUMP_GPIO_PIN}}`
+  - Active-high (GPIO high → MOSFET on → pump runs)
+  - Supply: 12V from the dedicated wall adapter (e.g. 12V 2A); Pi only drives the MOSFET gate
+  - Pump supply ground must be tied to Pi ground
+  - Flyback diode across the pump (cathode to +12V) is required — the peristaltic pump has a DC motor inside
+  - Flow rate is slow (~30–60 mL/min typical), so a single watering pulse is tens of seconds, not 1–2s like a submersible
+- Grow-light relay: GPIO `{{GROW_LIGHT_GPIO_PIN}}` (active-low unless your relay board is active-high — verify)
 - Fan relay (optional): GPIO `{{FAN_GPIO_PIN}}`
+
+### Pi helper package
+
+All sensor reads and actuator pulses go through the `clawfarmer_pi` package on the Pi (source: `pi/clawfarmer_pi/` in the repo, installed on the Pi with `pip install -e .` from `pi/`). The skills shell into it as `python3 -m clawfarmer_pi <command> …` and expect JSON on stdout. See `pi/README.md` for the command list and the wiring table.
 
 ## Jetson Orin Nano — camera
 

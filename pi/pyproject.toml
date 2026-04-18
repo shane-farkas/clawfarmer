@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawfarmer-pi"
+version = "0.1.0"
+description = "Raspberry Pi sensor + actuator helper for the clawfarmer OpenClaw pack."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "adafruit-blinka>=8.0",
+  "adafruit-circuitpython-ads1x15>=2.2",
+  "adafruit-circuitpython-bme280>=2.6",
+  "adafruit-circuitpython-bh1750>=1.0",
+  "gpiozero>=2.0",
+  "lgpio>=0.2",
+]
+
+[project.scripts]
+clawfarmer-pi = "clawfarmer_pi.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["clawfarmer_pi*"]
