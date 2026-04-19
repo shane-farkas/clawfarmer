@@ -1,0 +1,20 @@
+[Unit]
+Description=clawfarmer plant dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+Environment=CLAWFARMER_WORKSPACE=/var/lib/openclaw/.openclaw/workspace-plant
+Environment=DASHBOARD_PORT=8765
+Environment=DASHBOARD_BIND=0.0.0.0
+ExecStart=/usr/bin/python3 /usr/local/bin/clawfarmer-dashboard
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
