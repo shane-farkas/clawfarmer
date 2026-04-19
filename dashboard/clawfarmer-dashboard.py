@@ -86,7 +86,25 @@ h1 {{ margin: 0 0 4px; font-size: 22px; font-weight: 600; }}
 .dot.bad  {{ background: var(--bad);  box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }}
 section {{ margin-bottom: 28px; }}
 section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 12px; font-weight: 600; }}
+.photo-primary {{ max-width: 560px; }}
 .photo-primary img {{ width: 100%; border-radius: 8px; display: block; border: 1px solid var(--border); }}
+.charts {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}}
+.chart-card {{
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px;
+}}
+.chart-title {{
+  display: flex; justify-content: space-between; align-items: baseline;
+  color: var(--dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.8px; margin-bottom: 8px;
+}}
+.chart-current {{ color: var(--text); font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }}
+.chart-svg {{ display: block; width: 100%; height: auto; }}
+.chart-meta {{ color: var(--dim); font-size: 10px; margin-top: 4px; display: flex; justify-content: space-between; }}
 .observation {{
   margin-top: 12px; padding: 14px 16px; background: var(--card);
   border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
@@ -135,6 +153,11 @@ ul.watering li:last-child {{ border-bottom: none; }}
 <section>
   <h2>Current readings</h2>
   <div class="grid">{reading_cards}</div>
+</section>
+
+<section>
+  <h2>Last 12 hours</h2>
+  <div class="charts">{charts_block}</div>
 </section>
 
 <section>
@@ -209,6 +232,116 @@ def _render_reading(key: str, reading: dict, day_range: dict | None,
       <div class="reading-value">{vstr} <span class="reading-unit">{unit}</span></div>
       <div class="reading-range">{rng_str}</div>
     </div>"""
+
+
+def _render_chart(title: str, history: list, value_key: str, unit: str,
+                  healthy_band: tuple | None = None,
+                  fmt: str = "{:.1f}") -> str:
+    """Render a single-series SVG mini-chart for a reading over time."""
+    points = [(h.get("at"), h.get(value_key)) for h in history
+              if h.get(value_key) is not None]
+
+    W, H = 280, 110
+    PAD_L, PAD_R, PAD_T, PAD_B = 32, 10, 8, 20
+    chart_w = W - PAD_L - PAD_R
+    chart_h = H - PAD_T - PAD_B
+
+    if len(points) < 2:
+        return f'''
+  <div class="chart-card">
+    <div class="chart-title">{title}<span class="chart-current">— {unit}</span></div>
+    <svg viewBox="0 0 {W} {H}" class="chart-svg"></svg>
+    <div class="chart-meta"><span>no data yet</span><span></span></div>
+  </div>'''
+
+    values = [p[1] for p in points]
+    vmin = min(values)
+    vmax = max(values)
+    # pad the y range so the line isn't flat against the edges
+    span = max(vmax - vmin, 1.0)
+    pad = span * 0.15
+    vmin_axis = vmin - pad
+    vmax_axis = vmax + pad
+
+    # include the healthy band in the axis range if it extends beyond data
+    if healthy_band:
+        band_lo, band_hi = healthy_band
+        vmin_axis = min(vmin_axis, band_lo - pad * 0.3)
+        vmax_axis = max(vmax_axis, band_hi + pad * 0.3)
+
+    span_axis = max(vmax_axis - vmin_axis, 1.0)
+
+    def _y(v: float) -> float:
+        return PAD_T + chart_h * (1 - (v - vmin_axis) / span_axis)
+
+    def _x(i: int, n: int) -> float:
+        if n <= 1:
+            return PAD_L + chart_w / 2
+        return PAD_L + i * chart_w / (n - 1)
+
+    # healthy-band rect
+    band_svg = ""
+    if healthy_band:
+        band_lo, band_hi = healthy_band
+        band_top = _y(band_hi)
+        band_bot = _y(band_lo)
+        band_svg = (f'<rect x="{PAD_L}" y="{band_top:.1f}" '
+                    f'width="{chart_w}" height="{band_bot - band_top:.1f}" '
+                    f'fill="rgba(74, 222, 128, 0.08)" />')
+
+    # line polyline
+    n = len(points)
+    xs = [_x(i, n) for i in range(n)]
+    ys = [_y(v) for v in values]
+    polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
+
+    # y-axis labels (min + max)
+    y_labels = f'''
+    <text x="{PAD_L - 4}" y="{PAD_T + 4}" text-anchor="end" font-size="9" fill="#8b9bac">{fmt.format(vmax_axis)}</text>
+    <text x="{PAD_L - 4}" y="{PAD_T + chart_h + 2}" text-anchor="end" font-size="9" fill="#8b9bac">{fmt.format(vmin_axis)}</text>'''
+
+    # timestamps at x edges (oldest / newest)
+    def _short_time(iso: str | None) -> str:
+        if not iso:
+            return ""
+        try:
+            return datetime.fromisoformat(iso).strftime("%-I:%M%p").lower().replace("am", "a").replace("pm", "p")
+        except Exception:
+            return ""
+
+    t_first = _short_time(points[0][0])
+    t_last = _short_time(points[-1][0])
+
+    last_val = values[-1]
+    current_str = f"{fmt.format(last_val)} {unit}"
+
+    return f'''
+  <div class="chart-card">
+    <div class="chart-title">{title}<span class="chart-current">{current_str}</span></div>
+    <svg viewBox="0 0 {W} {H}" class="chart-svg" xmlns="http://www.w3.org/2000/svg">
+      {band_svg}
+      {y_labels}
+      <polyline points="{polyline}" fill="none" stroke="#60a5fa" stroke-width="1.6" />
+      <circle cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="2.5" fill="#60a5fa" />
+    </svg>
+    <div class="chart-meta"><span>{t_first}</span><span>{t_last}</span></div>
+  </div>'''
+
+
+def _render_charts(state: dict) -> str:
+    history = state.get("readings_history", []) or []
+    if not history:
+        return '<p class="empty">No history yet — first 15-min sweep will start populating.</p>'
+    charts = [
+        _render_chart("Soil moisture", history, "soil_moisture", "% VWC",
+                      healthy_band=(40, 70)),
+        _render_chart("Temperature", history, "temp_f", "°F",
+                      healthy_band=(65, 85)),
+        _render_chart("Humidity", history, "humidity_pct", "% RH",
+                      healthy_band=(40, 60)),
+        _render_chart("Light", history, "lux", "lux", fmt="{:.0f}"),
+    ]
+    return "".join(charts)
 
 
 def _render_photo_block(state: dict) -> str:
@@ -303,6 +436,7 @@ def render_index(flash: tuple[str, str] | None = None) -> str:
     return HTML_TEMPLATE.format(
         updated_at=_fmt_time(state.get("updated_at")),
         reading_cards="".join(cards),
+        charts_block=_render_charts(state),
         photo_block=_render_photo_block(state),
         gallery=_render_gallery(),
         watering_count=len(state.get("watering_history", []) or []),
