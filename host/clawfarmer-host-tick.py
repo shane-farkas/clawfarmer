@@ -124,6 +124,33 @@ def _default_state() -> dict:
     }
 
 
+def _archive_rich_analysis(state: dict) -> None:
+    """Before the photo-review cron overwrites last_rich_analysis.md, append
+    its current contents to growth-log.md as a timestamped entry. This keeps
+    a rolling history of every rich photo-review analysis for later lookback,
+    regardless of how often new photos trigger overwrites.
+
+    No-op when last_rich_analysis.md is missing or empty — that's the first-
+    run case where there's nothing to archive yet.
+    """
+    rich_file = WORKSPACE / "memory/last_rich_analysis.md"
+    log_file = WORKSPACE / "memory/growth-log.md"
+    if not rich_file.exists():
+        return
+    try:
+        content = rich_file.read_text().strip()
+        if not content:
+            return
+        mtime = datetime.fromtimestamp(rich_file.stat().st_mtime).astimezone()
+        header = mtime.strftime("### %Y-%m-%d %H:%M %Z — photo review")
+        entry = f"\n\n{header}\n\n{content}\n"
+        existing = log_file.read_text() if log_file.exists() else ""
+        log_file.write_text(existing + entry)
+    except Exception as exc:
+        _record_error(state, "rich-analysis-archive",
+                      f"{type(exc).__name__}: {exc}")
+
+
 def _append_history_snapshot(state: dict) -> None:
     """Append a compact snapshot of current readings to readings_history.
     Trimmed to last 48 entries — 12 hours at the 15-min sweep cadence."""
@@ -362,6 +389,11 @@ def cmd_photo() -> None:
                     except Exception as exc:
                         _record_error(state, "sidecar-write",
                                       f"{type(exc).__name__}: {exc}")
+
+                    # Before triggering the photo-review cron (which will
+                    # overwrite last_rich_analysis.md), archive the current
+                    # rich analysis to growth-log.md so history accumulates.
+                    _archive_rich_analysis(state)
 
                     # Chain into the rich photo-review cron so that manual
                     # dashboard captures + scheduled captures both refresh
