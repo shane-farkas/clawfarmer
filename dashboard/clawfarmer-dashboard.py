@@ -21,7 +21,8 @@ import json
 import os
 import socket
 import subprocess
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, quote
@@ -40,6 +41,8 @@ WORKSPACE = Path(os.getenv(
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
 RICH_ANALYSIS_FILE = WORKSPACE / "memory/last_rich_analysis.md"
+TICKER_FILE = WORKSPACE / "memory/basil-ticker.json"
+TICKER_BASE_PRICE_PER_G = 0.20  # Whole Foods reference — must match host-tick
 
 PORT = int(os.getenv("DASHBOARD_PORT", "8765"))
 BIND = os.getenv("DASHBOARD_BIND", "0.0.0.0")
@@ -145,6 +148,26 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
 .health-section-label {{ color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }}
 .health-suggestions ul {{ margin: 0; padding-left: 20px; }}
 .health-suggestions li {{ margin-bottom: 3px; }}
+.ticker-card {{
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 18px 20px;
+}}
+.ticker-header {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }}
+.ticker-symbol {{ font-size: 14px; font-weight: 600; letter-spacing: 1px; color: var(--text); }}
+.ticker-peer {{ display: block; color: var(--dim); font-size: 11px; font-weight: 400; letter-spacing: 0.3px; margin-top: 2px; text-transform: none; }}
+.ticker-price-row {{ display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }}
+.ticker-price {{ font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }}
+.ticker-unit {{ font-size: 14px; color: var(--dim); font-weight: 400; margin-left: 2px; }}
+.ticker-delta {{ font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }}
+.ticker-delta.up {{ color: var(--good); }}
+.ticker-delta.down {{ color: var(--bad); }}
+.ticker-delta.flat {{ color: var(--dim); }}
+.ticker-chart {{ margin: 4px -4px 14px; }}
+.ticker-chart svg {{ display: block; width: 100%; height: auto; }}
+.ticker-stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; padding-top: 14px; border-top: 1px solid var(--border); }}
+.ticker-stat {{ display: flex; flex-direction: column; gap: 2px; }}
+.ticker-stat-label {{ color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px; }}
+.ticker-stat-val {{ color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }}
 .rich-analysis {{
   margin-top: 12px; padding: 14px 16px; background: var(--card);
   border-left: 3px solid #c084fc; border-radius: 0 6px 6px 0;
@@ -202,6 +225,8 @@ ul.watering li:last-child {{ border-bottom: none; }}
   <h2>Current readings</h2>
   <div class="grid">{reading_cards}</div>
 </section>
+
+{ticker_block}
 
 <section>
   <h2>Last 12 hours</h2>
@@ -567,6 +592,254 @@ def _render_health_block(state: dict) -> str:
     </div>'''
 
 
+def _load_ticker() -> dict:
+    if not TICKER_FILE.exists():
+        return {}
+    try:
+        return json.loads(TICKER_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _ticks_to_ohlc(ticks: list) -> list:
+    """Group ticks by local date, return OHLC rows sorted ascending."""
+    by_day: dict[str, list] = defaultdict(list)
+    for t in ticks:
+        iso = t.get("at")
+        price = t.get("price_per_g")
+        if iso is None or price is None:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso)
+        except Exception:
+            continue
+        day = dt.astimezone().date().isoformat()
+        by_day[day].append((dt, float(price)))
+    rows = []
+    for day in sorted(by_day.keys()):
+        series = sorted(by_day[day], key=lambda p: p[0])
+        prices = [p[1] for p in series]
+        rows.append({
+            "date": day,
+            "open": prices[0],
+            "high": max(prices),
+            "low": min(prices),
+            "close": prices[-1],
+        })
+    return rows
+
+
+def _render_candlestick_svg(ohlc: list, base_price: float) -> str:
+    """Render up to the last 14 daily candles as an SVG. Green candle = close
+    above open, red = below. Dashed line marks the Whole Foods peer price."""
+    if not ohlc:
+        return ""
+    ohlc = ohlc[-14:]
+    W, H = 640, 220
+    PAD_L, PAD_R, PAD_T, PAD_B = 48, 14, 10, 28
+    chart_w = W - PAD_L - PAD_R
+    chart_h = H - PAD_T - PAD_B
+
+    highs = [d["high"] for d in ohlc]
+    lows = [d["low"] for d in ohlc]
+    vmin = min(lows + [base_price])
+    vmax = max(highs + [base_price])
+    span = max(vmax - vmin, 0.001)
+    pad = span * 0.12
+    vmin_axis = vmin - pad
+    vmax_axis = vmax + pad
+    span_axis = max(vmax_axis - vmin_axis, 0.001)
+
+    def _y(v: float) -> float:
+        return PAD_T + chart_h * (1 - (v - vmin_axis) / span_axis)
+
+    n = len(ohlc)
+    slot = chart_w / n
+    body_w = max(4.0, slot * 0.6)
+
+    parts = []
+
+    # peer baseline
+    peer_y = _y(base_price)
+    parts.append(
+        f'<line x1="{PAD_L}" y1="{peer_y:.1f}" x2="{PAD_L + chart_w}" y2="{peer_y:.1f}" '
+        f'stroke="#8b9bac" stroke-width="1" stroke-dasharray="3 3" opacity="0.5" />'
+    )
+    parts.append(
+        f'<text x="{PAD_L + chart_w - 2}" y="{peer_y - 3:.1f}" text-anchor="end" '
+        f'font-size="9" fill="#8b9bac">Whole Foods ${base_price:.2f}</text>'
+    )
+
+    # candles
+    for i, d in enumerate(ohlc):
+        x_center = PAD_L + (i + 0.5) * slot
+        yo, yh, yl, yc = _y(d["open"]), _y(d["high"]), _y(d["low"]), _y(d["close"])
+        up = d["close"] >= d["open"]
+        color = "#4ade80" if up else "#ef4444"
+        body_top = min(yo, yc)
+        body_h = max(1.5, abs(yc - yo))
+        parts.append(
+            f'<line x1="{x_center:.1f}" y1="{yh:.1f}" x2="{x_center:.1f}" y2="{yl:.1f}" '
+            f'stroke="{color}" stroke-width="1.2" />'
+        )
+        parts.append(
+            f'<rect x="{x_center - body_w / 2:.1f}" y="{body_top:.1f}" '
+            f'width="{body_w:.1f}" height="{body_h:.1f}" fill="{color}" />'
+        )
+
+    # y-axis labels
+    parts.append(
+        f'<text x="{PAD_L - 6}" y="{PAD_T + 6}" text-anchor="end" font-size="10" '
+        f'fill="#8b9bac">${vmax_axis:.3f}</text>'
+    )
+    parts.append(
+        f'<text x="{PAD_L - 6}" y="{PAD_T + chart_h + 2}" text-anchor="end" font-size="10" '
+        f'fill="#8b9bac">${vmin_axis:.3f}</text>'
+    )
+
+    # x-axis date labels (first, middle, last)
+    def _short(date_iso: str) -> str:
+        try:
+            return datetime.fromisoformat(date_iso).strftime("%b %d")
+        except Exception:
+            return date_iso[5:]
+
+    anchors = [(0, "start"), (n // 2, "middle"), (n - 1, "end")] if n >= 3 else [(0, "start"), (n - 1, "end")]
+    seen = set()
+    for idx, anchor in anchors:
+        if idx in seen or idx >= n:
+            continue
+        seen.add(idx)
+        x = PAD_L + (idx + 0.5) * slot
+        parts.append(
+            f'<text x="{x:.1f}" y="{H - 8}" text-anchor="{anchor}" font-size="10" '
+            f'fill="#8b9bac">{_short(ohlc[idx]["date"])}</text>'
+        )
+
+    return (
+        f'<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg">'
+        + "".join(parts)
+        + "</svg>"
+    )
+
+
+def _compute_24h_growth_g(ticks: list) -> float | None:
+    """Mass change over the last 24h, in grams. Returns None when there isn't
+    at least ~1h of history older than now to compare against."""
+    if len(ticks) < 2:
+        return None
+    try:
+        latest = ticks[-1]
+        latest_dt = datetime.fromisoformat(latest["at"])
+        cutoff = latest_dt - timedelta(hours=24)
+    except Exception:
+        return None
+    baseline = None
+    for t in ticks:
+        try:
+            t_dt = datetime.fromisoformat(t["at"])
+        except Exception:
+            continue
+        if t_dt >= cutoff:
+            baseline = t
+            break
+    if baseline is None:
+        return None
+    try:
+        return float(latest.get("mass_g") or 0) - float(baseline.get("mass_g") or 0)
+    except Exception:
+        return None
+
+
+def _render_ticker_section() -> str:
+    ticker = _load_ticker()
+    ticks = ticker.get("ticks") or []
+    if not ticks:
+        return ('<section><h2>📈 BASIL.X</h2>'
+                '<div class="ticker-card">'
+                '<p class="empty">Ticker bootstrapping — first candle prints after the next sensor sweep.</p>'
+                '</div></section>')
+
+    latest = ticks[-1]
+    price = float(latest.get("price_per_g") or 0)
+    mass = float(ticker.get("mass_grams") or 0)
+    market_cap = price * mass
+    base_price = float(ticker.get("base_price_per_g") or TICKER_BASE_PRICE_PER_G)
+
+    ohlc = _ticks_to_ohlc(ticks)
+
+    # Day-over-day % delta: today's latest vs. prior day's close. If there's
+    # only one day of history, compare to the day's open so we show something.
+    delta_pct = 0.0
+    if len(ohlc) >= 2:
+        prev_close = ohlc[-2]["close"]
+        if prev_close:
+            delta_pct = (ohlc[-1]["close"] - prev_close) / prev_close * 100
+    elif len(ohlc) == 1:
+        today = ohlc[0]
+        if today["open"]:
+            delta_pct = (today["close"] - today["open"]) / today["open"] * 100
+
+    if delta_pct > 0.01:
+        delta_cls = "up"
+        arrow = "▲"
+        sign = "+"
+    elif delta_pct < -0.01:
+        delta_cls = "down"
+        arrow = "▼"
+        sign = ""
+    else:
+        delta_cls = "flat"
+        arrow = "•"
+        sign = ""
+
+    # Premium / discount to Whole Foods baseline
+    peer_delta_pct = (price - base_price) / base_price * 100 if base_price else 0
+    peer_label = (f"+{peer_delta_pct:.1f}% premium" if peer_delta_pct > 0
+                  else f"{peer_delta_pct:.1f}% discount")
+
+    # Age
+    age_label = "—"
+    inception = ticker.get("inception_at")
+    if inception:
+        try:
+            inc_dt = datetime.fromisoformat(inception)
+            days = (datetime.now(inc_dt.tzinfo) - inc_dt).days
+            age_label = f"{days} d"
+        except Exception:
+            pass
+
+    # 24h mass delta
+    growth_24h = _compute_24h_growth_g(ticks)
+    growth_label = f"{growth_24h:+.2f} g" if growth_24h is not None else "—"
+
+    candles = _render_candlestick_svg(ohlc, base_price)
+
+    return f'''<section>
+  <h2>📈 BASIL.X</h2>
+  <div class="ticker-card">
+    <div class="ticker-header">
+      <div>
+        <div class="ticker-symbol">BASIL.X
+          <span class="ticker-peer">Whole Foods peer ${base_price:.2f}/g · {peer_label}</span>
+        </div>
+      </div>
+      <div class="ticker-price-row">
+        <div class="ticker-price">${price:.4f}<span class="ticker-unit">/g</span></div>
+        <div class="ticker-delta {delta_cls}">{arrow} {sign}{delta_pct:.2f}% today</div>
+      </div>
+    </div>
+    <div class="ticker-chart">{candles}</div>
+    <div class="ticker-stats">
+      <div class="ticker-stat"><span class="ticker-stat-label">Market cap</span><span class="ticker-stat-val">${market_cap:.2f}</span></div>
+      <div class="ticker-stat"><span class="ticker-stat-label">Shares outstanding</span><span class="ticker-stat-val">{mass:.2f} g</span></div>
+      <div class="ticker-stat"><span class="ticker-stat-label">24h growth</span><span class="ticker-stat-val">{growth_label}</span></div>
+      <div class="ticker-stat"><span class="ticker-stat-label">Listed</span><span class="ticker-stat-val">{age_label} ago</span></div>
+    </div>
+  </div>
+</section>'''
+
+
 def _render_photo_block(state: dict, selected_filename: str | None = None) -> str:
     # if ?photo=<filename> is in the query, look up the sidecar; otherwise use
     # the live last_photo from state
@@ -715,6 +988,7 @@ def render_index(flash: tuple[str, str] | None = None,
         errors_block=_render_errors(state),
         flash_block=flash_block,
         health_banner=health_banner,
+        ticker_block=_render_ticker_section(),
     )
 
 
