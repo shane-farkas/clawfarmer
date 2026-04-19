@@ -63,8 +63,14 @@ body {{
   background: var(--bg); color: var(--text);
   max-width: 1200px; margin-left: auto; margin-right: auto;
 }}
+.header {{
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap;
+  margin-bottom: 20px;
+}}
+.header-left {{ flex: 1 1 auto; }}
 h1 {{ margin: 0 0 4px; font-size: 22px; font-weight: 600; }}
-.updated {{ color: var(--dim); font-size: 13px; margin-bottom: 24px; }}
+.updated {{ color: var(--dim); font-size: 13px; }}
 .grid {{
   display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px; margin-bottom: 28px;
@@ -130,7 +136,7 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
 ul.watering {{ list-style: none; padding: 0; margin: 0; }}
 ul.watering li {{ padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; }}
 ul.watering li:last-child {{ border-bottom: none; }}
-.toolbar {{ display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }}
+.toolbar {{ display: flex; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }}
 .toolbar form {{ margin: 0; }}
 .toolbar button {{
   font: inherit; color: var(--text);
@@ -149,14 +155,18 @@ ul.watering li:last-child {{ border-bottom: none; }}
 </style>
 </head>
 <body>
-<h1>🌿 clawfarmer</h1>
-<div class="updated">last updated {updated_at} · auto-refresh every 60s</div>
+<div class="header">
+  <div class="header-left">
+    <h1>🌿 clawfarmer</h1>
+    <div class="updated">last updated {updated_at} · auto-refresh every 60s</div>
+  </div>
+  <div class="toolbar">
+    <form method="post" action="/trigger/capture"><button type="submit">📸 Take photo now</button></form>
+    <form method="post" action="/trigger/sensors"><button type="submit">🌡️ Read sensors now</button></form>
+  </div>
+</div>
 
 {flash_block}
-<div class="toolbar">
-  <form method="post" action="/trigger/capture"><button type="submit">📸 Take photo now</button></form>
-  <form method="post" action="/trigger/sensors"><button type="submit">🌡️ Read sensors now</button></form>
-</div>
 
 <section>
   <h2>Current readings</h2>
