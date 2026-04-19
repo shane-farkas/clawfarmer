@@ -28,12 +28,12 @@ def _cmd_capture(args: argparse.Namespace) -> None:
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
-    from .analyze import analyze_image, DEFAULT_PROMPT
+    from .analyze import analyze_image, DEFAULT_PROMPT, DEFAULT_MODEL
 
     out = analyze_image(
         path=args.image,
         prompt=args.prompt or DEFAULT_PROMPT,
-        model=args.model,
+        model=args.model or DEFAULT_MODEL,
         url=args.url,
         timeout_s=args.timeout,
     )
@@ -55,7 +55,8 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("analyze", help="Run a local vision model over an image via Ollama")
     s.add_argument("--image", required=True, help="Path to the JPEG to analyze")
     s.add_argument("--prompt", default=None, help="Override the default observation prompt")
-    s.add_argument("--model", default="moondream", help="Ollama model name (default: moondream)")
+    s.add_argument("--model", default=None,
+                   help="Ollama model name (default: pulled from analyze.DEFAULT_MODEL)")
     s.add_argument("--url", default="http://127.0.0.1:11434/api/chat",
                    help="Ollama chat endpoint (use /api/chat, not /api/generate, for vision)")
     s.add_argument("--timeout", type=int, default=120, help="Ollama request timeout in seconds")
