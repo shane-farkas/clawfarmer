@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -122,6 +123,61 @@ def _default_state() -> dict:
         "active_detections": [],
         "last_errors": [],
     }
+
+
+def _extract_json(raw: str) -> dict | None:
+    """Parse a JSON object out of mixed stdout (OpenClaw CLI prints a banner
+    before the JSON payload). Returns None if no object can be parsed."""
+    if not raw:
+        return None
+    # find the first '{' at line start — that's the JSON body
+    for i, line in enumerate(raw.splitlines()):
+        if line.lstrip().startswith("{"):
+            tail = "\n".join(raw.splitlines()[i:])
+            try:
+                return json.loads(tail)
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _wait_and_capture_review_summary(
+    cron_id: str, triggered_at: float, timeout_s: int = 60,
+    poll_interval_s: int = 3,
+) -> str | None:
+    """Poll the OpenClaw cron runs API until the most recent run finishes
+    (after `triggered_at`) and return its summary text. Returns None on
+    timeout or if no fresh run is found."""
+    deadline = triggered_at + timeout_s
+    while time.time() < deadline:
+        time.sleep(poll_interval_s)
+        try:
+            r = subprocess.run(
+                ["openclaw", "cron", "runs", "--id", cron_id,
+                 "--limit", "1", "--json"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            continue
+        if r.returncode != 0:
+            continue
+        data = _extract_json(r.stdout)
+        if not data:
+            continue
+        entries = data.get("entries") or []
+        if not entries:
+            continue
+        entry = entries[0]
+        if entry.get("action") != "finished":
+            continue
+        run_at_s = (entry.get("runAtMs") or 0) / 1000
+        # require the entry to be from our trigger (not a stale older run)
+        if run_at_s < triggered_at - 5:
+            continue
+        summary = entry.get("summary")
+        if summary:
+            return summary
+    return None
 
 
 def _archive_rich_analysis(state: dict) -> None:
@@ -395,23 +451,45 @@ def cmd_photo() -> None:
                     # rich analysis to growth-log.md so history accumulates.
                     _archive_rich_analysis(state)
 
-                    # Chain into the rich photo-review cron so that manual
-                    # dashboard captures + scheduled captures both refresh
-                    # the dashboard's rich_analysis.md.
+                    # Chain into the rich photo-review cron so every manual
+                    # button press + scheduled capture refreshes the
+                    # dashboard's rich_analysis.md with a fresh synthesis.
                     if PHOTO_REVIEW_CRON_ID:
+                        trigger_ts = time.time()
                         try:
                             r = subprocess.run(
                                 ["openclaw", "cron", "run",
                                  PHOTO_REVIEW_CRON_ID],
                                 capture_output=True, text=True, timeout=15,
                             )
-                            if r.returncode == 0:
-                                review_triggered = True
-                            else:
+                            if r.returncode != 0:
                                 _record_error(
                                     state, "photo-review-trigger",
                                     (r.stderr or r.stdout).strip()[:200],
                                 )
+                            else:
+                                review_triggered = True
+                                # Poll for the run to finish, then take its
+                                # summary and write it to last_rich_analysis.md
+                                # ourselves — bypasses the sandbox's Write tool
+                                # which misreports errors on success.
+                                summary = _wait_and_capture_review_summary(
+                                    PHOTO_REVIEW_CRON_ID, trigger_ts,
+                                )
+                                if summary:
+                                    try:
+                                        (WORKSPACE / "memory/last_rich_analysis.md"
+                                         ).write_text(summary)
+                                    except Exception as exc:
+                                        _record_error(
+                                            state, "rich-analysis-write",
+                                            f"{type(exc).__name__}: {exc}",
+                                        )
+                                else:
+                                    _record_error(
+                                        state, "photo-review-poll",
+                                        "no finished run captured within timeout",
+                                    )
                         except subprocess.TimeoutExpired:
                             _record_error(state, "photo-review-trigger",
                                           "openclaw cron run timed out")
