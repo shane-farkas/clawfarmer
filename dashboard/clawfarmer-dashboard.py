@@ -313,10 +313,15 @@ def render_index(flash: tuple[str, str] | None = None) -> str:
 
 
 def _trigger_service(service: str) -> tuple[str, str]:
-    """Fire a whitelisted systemd service. Returns (kind, message)."""
+    """Fire a whitelisted systemd service. Returns (kind, message).
+
+    Uses --no-block so systemctl returns as soon as the job is enqueued instead
+    of waiting for the oneshot to finish. A 30s photo capture would otherwise
+    block the dashboard's HTTP response for the duration.
+    """
     try:
         result = subprocess.run(
-            ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", service],
+            ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", "--no-block", service],
             capture_output=True, text=True, timeout=10,
         )
     except subprocess.TimeoutExpired:

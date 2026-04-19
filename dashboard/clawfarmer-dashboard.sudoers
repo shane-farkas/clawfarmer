@@ -13,4 +13,4 @@
 #   sudo visudo -cf /etc/sudoers.d/clawfarmer-dashboard
 #   (should report: parsed OK)
 
-openclaw ALL=(root) NOPASSWD: /usr/bin/systemctl start clawfarmer-host-tick@photo.service, /usr/bin/systemctl start clawfarmer-host-tick@sensors.service
+openclaw ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block clawfarmer-host-tick@photo.service, /usr/bin/systemctl start --no-block clawfarmer-host-tick@sensors.service
