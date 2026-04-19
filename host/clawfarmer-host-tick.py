@@ -40,7 +40,7 @@ PI_KEY = os.getenv("PI_KEY", "/var/lib/openclaw/.ssh/id_ed25519_plantpi")
 PI_VENV_PYTHON = os.getenv("PI_VENV_PYTHON", "~/clawfarmer-venv/bin/python3")
 
 JETSON_HOST = os.getenv("JETSON_HOST", "orin-nano.local")
-JETSON_USER = os.getenv("JETSON_USER", "shane")
+JETSON_USER = os.getenv("JETSON_USER", "{{JETSON_USER}}")
 JETSON_KEY = os.getenv("JETSON_KEY", "/var/lib/openclaw/.ssh/id_ed25519_plantjetson")
 JETSON_VENV_PYTHON = os.getenv("JETSON_VENV_PYTHON", "~/clawfarmer-venv/bin/python3")
 JETSON_PHOTO_DIR = os.getenv("JETSON_PHOTO_DIR", "/var/lib/clawfarmer/photos")

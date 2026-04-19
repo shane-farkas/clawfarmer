@@ -13,7 +13,7 @@ Environment=PI_HOST=clawpi.local
 Environment=PI_USER=pi
 Environment=PI_KEY=/var/lib/openclaw/.ssh/id_ed25519_plantpi
 Environment=JETSON_HOST=orin-nano.local
-Environment=JETSON_USER=shane
+Environment=JETSON_USER={{JETSON_USER}}
 Environment=JETSON_KEY=/var/lib/openclaw/.ssh/id_ed25519_plantjetson
 Environment=SOIL_CHANNEL=0
 Environment=SOIL_DRY_RAW=26000

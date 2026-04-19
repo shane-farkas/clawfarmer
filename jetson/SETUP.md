@@ -116,7 +116,7 @@ On Claw, substitute the Jetson values in the deployed workspace:
 ```bash
 WS=/var/lib/openclaw/.openclaw/workspace-plant
 sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{JETSON_HOST}}|orin-nano.local|g' {} +
-sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{JETSON_USER}}|shane|g' {} +
+sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{JETSON_USER}}|<your-jetson-username>|g' {} +
 sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{JETSON_SSH_KEY_PATH}}|/var/lib/openclaw/.ssh/id_ed25519_plantjetson|g' {} +
 sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{CAMERA_DEVICE}}|/dev/video0|g' {} +
 sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{CAMERA_RESOLUTION}}|4056x3040|g' {} +
@@ -130,7 +130,7 @@ sudo find $WS -type f \( -name '*.md' -o -name '*.json' \) -exec sed -i 's|{{PHO
 
 ```bash
 sudo -u openclaw -H ssh -i /var/lib/openclaw/.ssh/id_ed25519_plantjetson \
-  shane@orin-nano.local \
+  <your-jetson-username>@orin-nano.local \
   "~/clawfarmer-venv/bin/python3 -m clawfarmer_jetson capture --out /var/lib/clawfarmer/photos"
 ```
 
