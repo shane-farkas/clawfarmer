@@ -86,7 +86,14 @@ h1 {{ margin: 0 0 4px; font-size: 22px; font-weight: 600; }}
 .dot.bad  {{ background: var(--bad);  box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }}
 section {{ margin-bottom: 28px; }}
 section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 12px; font-weight: 600; }}
-.photo-primary {{ max-width: 560px; }}
+.photo-layout {{
+  display: grid;
+  grid-template-columns: minmax(360px, 560px) 1fr;
+  gap: 20px;
+  margin-bottom: 28px;
+}}
+.photo-layout section {{ margin-bottom: 0; }}
+@media (max-width: 820px) {{ .photo-layout {{ grid-template-columns: 1fr; }} }}
 .photo-primary img {{ width: 100%; border-radius: 8px; display: block; border: 1px solid var(--border); }}
 .charts {{
   display: grid;
@@ -111,7 +118,7 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
   line-height: 1.5; font-size: 14px;
 }}
 .photo-meta {{ color: var(--dim); font-size: 12px; margin-top: 8px; }}
-.gallery {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }}
+.gallery {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }}
 .gallery a {{ display: block; background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-decoration: none; color: var(--text); transition: border-color 0.15s; }}
 .gallery a:hover {{ border-color: var(--accent); }}
 .gallery a.selected {{ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.3); }}
@@ -161,15 +168,16 @@ ul.watering li:last-child {{ border-bottom: none; }}
   <div class="charts">{charts_block}</div>
 </section>
 
-<section>
-  <h2>Latest photo</h2>
-  {photo_block}
-</section>
-
-<section>
-  <h2>Recent photos</h2>
-  {gallery}
-</section>
+<div class="photo-layout">
+  <section>
+    <h2>Latest photo</h2>
+    {photo_block}
+  </section>
+  <section>
+    <h2>Recent photos</h2>
+    {gallery}
+  </section>
+</div>
 
 <section>
   <h2>Watering history ({watering_count})</h2>
