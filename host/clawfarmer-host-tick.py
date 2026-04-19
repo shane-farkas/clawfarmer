@@ -50,6 +50,12 @@ SOIL_CHANNEL = int(os.getenv("SOIL_CHANNEL", "0"))
 SOIL_DRY_RAW = int(os.getenv("SOIL_DRY_RAW", "26000"))
 SOIL_WET_RAW = int(os.getenv("SOIL_WET_RAW", "12000"))
 
+# Optional — if set, the photo action triggers the given OpenClaw cron job
+# right after a successful capture + analyze. Used to chain the rich
+# photo-review synthesis so manual button presses and scheduled captures
+# both refresh the dashboard's rich_analysis.md.
+PHOTO_REVIEW_CRON_ID = os.getenv("PHOTO_REVIEW_CRON_ID", "").strip()
+
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
 
@@ -312,6 +318,7 @@ def cmd_photo() -> None:
         sys.exit(1)
 
     state["last_photo"] = {"filename": filename, "at": data.get("at")}
+    review_triggered = False
 
     # Second step: ask the Jetson's local vision model to describe the photo.
     # This runs on the Jetson via Ollama; the observation lands in state so
@@ -355,6 +362,30 @@ def cmd_photo() -> None:
                     except Exception as exc:
                         _record_error(state, "sidecar-write",
                                       f"{type(exc).__name__}: {exc}")
+
+                    # Chain into the rich photo-review cron so that manual
+                    # dashboard captures + scheduled captures both refresh
+                    # the dashboard's rich_analysis.md.
+                    if PHOTO_REVIEW_CRON_ID:
+                        try:
+                            r = subprocess.run(
+                                ["openclaw", "cron", "run",
+                                 PHOTO_REVIEW_CRON_ID],
+                                capture_output=True, text=True, timeout=15,
+                            )
+                            if r.returncode == 0:
+                                review_triggered = True
+                            else:
+                                _record_error(
+                                    state, "photo-review-trigger",
+                                    (r.stderr or r.stdout).strip()[:200],
+                                )
+                        except subprocess.TimeoutExpired:
+                            _record_error(state, "photo-review-trigger",
+                                          "openclaw cron run timed out")
+                        except Exception as exc:
+                            _record_error(state, "photo-review-trigger",
+                                          f"{type(exc).__name__}: {exc}")
                 else:
                     _record_error(state, "jetson/analyze",
                                   ana.get("error", "analyze ok:false"))
@@ -367,6 +398,7 @@ def cmd_photo() -> None:
         "ok": True, "action": "photo",
         "filename": filename, "size_bytes": data.get("size_bytes"),
         "has_observation": bool(state["last_photo"].get("observation")),
+        "review_triggered": review_triggered,
     }))
 
 
