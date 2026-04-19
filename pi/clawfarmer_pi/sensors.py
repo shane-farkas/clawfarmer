@@ -28,8 +28,8 @@ def read_soil(
 
     i2c = busio.I2C(board.SCL, board.SDA)
     ads = ADS1115(i2c, address=address)
-    pin = [ADS1115.P0, ADS1115.P1, ADS1115.P2, ADS1115.P3][channel]
-    chan = AnalogIn(ads, pin)
+    # Newer adafruit-circuitpython-ads1x15 accepts an int channel directly.
+    chan = AnalogIn(ads, channel)
     raw = chan.value
     voltage = chan.voltage
 

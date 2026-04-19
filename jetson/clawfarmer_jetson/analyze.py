@@ -46,6 +46,10 @@ def analyze_image(
 
     # Use /api/chat — Ollama's /api/generate returns 200 OK with zero tokens
     # for vision models (a known quirk).
+    # keep_alive=0 unloads Moondream immediately after the response — on
+    # Orin Nano 8GB the camera pipeline (nvarguscamerasrc) needs that GPU
+    # memory back or the next capture fails. Trades ~20s reload time on
+    # the next analyze call for a reliable camera path.
     payload = {
         "model": model,
         "messages": [{
@@ -54,6 +58,7 @@ def analyze_image(
             "images": [image_b64],
         }],
         "stream": False,
+        "keep_alive": 0,
     }
     body = json.dumps(payload).encode("utf-8")
 
