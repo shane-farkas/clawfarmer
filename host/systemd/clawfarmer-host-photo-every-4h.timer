@@ -1,0 +1,11 @@
+[Unit]
+Description=clawfarmer photo every 4 hours
+
+[Timer]
+OnCalendar=*-*-* 00/4:00:00
+Unit=clawfarmer-host-tick@photo.service
+Persistent=true
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
