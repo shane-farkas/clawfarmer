@@ -23,6 +23,7 @@ import socket
 import subprocess
 from collections import defaultdict
 from datetime import datetime, timedelta
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, quote
@@ -203,9 +204,82 @@ ul.watering li:last-child {{ border-bottom: none; }}
   font-size: 13px;
 }}
 .flash.error {{ background: rgba(239, 68, 68, 0.1); border-left-color: var(--bad); }}
+.candle-up {{ stroke: var(--good); fill: var(--good); }}
+.candle-down {{ stroke: var(--bad); fill: var(--bad); }}
+
+/* ─── Bloomberg Terminal theme ─────────────────────────────────────────
+   Opt-in via the `theme` cookie. Redefines the CSS variables so every
+   existing rule inherits terminal colors; then layers on sharp corners,
+   monospace typography, and bracketed section labels. */
+body.theme-bloomberg {{
+  --bg: #000000;
+  --card: #060606;
+  --border: #3d2800;
+  --text: #ff8000;
+  --dim: #996600;
+  --good: #00ff55;
+  --warn: #ffcc00;
+  --bad: #ff3333;
+  --accent: #00ccff;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
+}}
+body.theme-bloomberg h1 {{ color: #ffcc00; text-transform: uppercase; letter-spacing: 2px; }}
+body.theme-bloomberg h1::before {{ content: "► "; color: var(--text); }}
+body.theme-bloomberg section h2 {{ color: #ffcc00; }}
+body.theme-bloomberg section h2::before {{ content: "["; margin-right: 3px; color: var(--text); }}
+body.theme-bloomberg section h2::after  {{ content: "]"; margin-left: 3px; color: var(--text); }}
+body.theme-bloomberg .card,
+body.theme-bloomberg .chart-card,
+body.theme-bloomberg .ticker-card,
+body.theme-bloomberg .health-card,
+body.theme-bloomberg .gallery a,
+body.theme-bloomberg .rich-analysis,
+body.theme-bloomberg .observation,
+body.theme-bloomberg .flash {{
+  border-radius: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+}}
+body.theme-bloomberg .observation {{ border-left: 3px solid var(--accent); }}
+body.theme-bloomberg .rich-analysis {{ border-left: 3px solid #c084fc; }}
+body.theme-bloomberg .flash {{ border-left: 3px solid var(--accent); }}
+body.theme-bloomberg .flash.error {{ border-left: 3px solid var(--bad); background: #1a0303; }}
+body.theme-bloomberg .reading-value,
+body.theme-bloomberg .ticker-price,
+body.theme-bloomberg .ticker-stat-val,
+body.theme-bloomberg .health-number {{ color: var(--good); }}
+body.theme-bloomberg .reading-label,
+body.theme-bloomberg .ticker-stat-label,
+body.theme-bloomberg .health-section-label,
+body.theme-bloomberg .chart-title,
+body.theme-bloomberg .rich-header,
+body.theme-bloomberg .gallery-caption,
+body.theme-bloomberg .photo-meta,
+body.theme-bloomberg .updated {{ color: var(--dim); }}
+body.theme-bloomberg .toolbar button {{
+  border-radius: 0;
+  background: #000;
+  border: 1px solid var(--text);
+  color: var(--text);
+  text-transform: uppercase;
+  font-family: inherit;
+  letter-spacing: 1px;
+}}
+body.theme-bloomberg .toolbar button:hover {{ background: #1a1200; border-color: var(--warn); color: var(--warn); }}
+body.theme-bloomberg .dot {{ box-shadow: none; border-radius: 0; width: 10px; height: 10px; }}
+body.theme-bloomberg .ticker-symbol {{ color: var(--warn); }}
+body.theme-bloomberg .ticker-peer {{ color: var(--dim); }}
+body.theme-bloomberg .ticker-chart,
+body.theme-bloomberg .chart-svg {{ filter: saturate(1.3); }}
+body.theme-bloomberg .errors {{ border-left-color: var(--bad); }}
+body.theme-bloomberg ul.watering li {{ border-bottom-color: var(--border); }}
+body.theme-bloomberg .gallery a:hover,
+body.theme-bloomberg .gallery a.selected {{ border-color: var(--warn); box-shadow: none; }}
 </style>
 </head>
-<body>
+<body class="{body_class}">
 <div class="header">
   <div class="header-left">
     <h1>🌿 clawfarmer</h1>
@@ -214,6 +288,7 @@ ul.watering li:last-child {{ border-bottom: none; }}
   <div class="toolbar">
     <form method="post" action="/trigger/capture"><button type="submit">📸 Take photo now</button></form>
     <form method="post" action="/trigger/sensors"><button type="submit">🌡️ Read sensors now</button></form>
+    <form method="post" action="/theme/toggle"><button type="submit">{theme_toggle_label}</button></form>
   </div>
 </div>
 
@@ -675,16 +750,16 @@ def _render_candlestick_svg(ohlc: list, base_price: float) -> str:
         x_center = PAD_L + (i + 0.5) * slot
         yo, yh, yl, yc = _y(d["open"]), _y(d["high"]), _y(d["low"]), _y(d["close"])
         up = d["close"] >= d["open"]
-        color = "#4ade80" if up else "#ef4444"
+        klass = "candle-up" if up else "candle-down"
         body_top = min(yo, yc)
         body_h = max(1.5, abs(yc - yo))
         parts.append(
-            f'<line x1="{x_center:.1f}" y1="{yh:.1f}" x2="{x_center:.1f}" y2="{yl:.1f}" '
-            f'stroke="{color}" stroke-width="1.2" />'
+            f'<line class="{klass}" x1="{x_center:.1f}" y1="{yh:.1f}" '
+            f'x2="{x_center:.1f}" y2="{yl:.1f}" stroke-width="1.2" />'
         )
         parts.append(
-            f'<rect x="{x_center - body_w / 2:.1f}" y="{body_top:.1f}" '
-            f'width="{body_w:.1f}" height="{body_h:.1f}" fill="{color}" />'
+            f'<rect class="{klass}" x="{x_center - body_w / 2:.1f}" '
+            f'y="{body_top:.1f}" width="{body_w:.1f}" height="{body_h:.1f}" />'
         )
 
     # y-axis labels
@@ -962,7 +1037,8 @@ def _render_errors(state: dict) -> str:
 
 
 def render_index(flash: tuple[str, str] | None = None,
-                 selected_photo: str | None = None) -> str:
+                 selected_photo: str | None = None,
+                 theme: str = "default") -> str:
     state = _load_state()
     readings = state.get("readings", {}) or {}
     ranges = state.get("day_ranges", {}) or {}
@@ -983,6 +1059,8 @@ def render_index(flash: tuple[str, str] | None = None,
         flash_block = f'<div class="{css}">{message}</div>'
     # Health banner always reflects CURRENT state (not the selected photo's era)
     health_banner = _render_health_block(state) if selected_photo is None else ""
+    body_class = "theme-bloomberg" if theme == "bloomberg" else "theme-default"
+    theme_toggle_label = "🌿 Default view" if theme == "bloomberg" else "📟 Terminal"
     return HTML_TEMPLATE.format(
         updated_at=_fmt_time(state.get("updated_at")),
         reading_cards="".join(cards),
@@ -995,6 +1073,8 @@ def render_index(flash: tuple[str, str] | None = None,
         flash_block=flash_block,
         health_banner=health_banner,
         ticker_block=_render_ticker_section(),
+        body_class=body_class,
+        theme_toggle_label=theme_toggle_label,
     )
 
 
@@ -1019,6 +1099,21 @@ def _trigger_service(service: str) -> tuple[str, str]:
         return "error", f"systemctl exited {result.returncode} for {service}: {err}"
     label = "Photo capture" if "photo" in service else "Sensor sweep"
     return "ok", f"{label} triggered — new readings will appear within ~30-60s. Refresh to see."
+
+
+def _parse_theme_cookie(header_value: str | None) -> str:
+    """Extract the `theme` cookie. Returns 'bloomberg' or 'default'."""
+    if not header_value:
+        return "default"
+    try:
+        jar = SimpleCookie()
+        jar.load(header_value)
+        val = jar.get("theme")
+        if val and val.value == "bloomberg":
+            return "bloomberg"
+    except Exception:
+        pass
+    return "default"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1053,8 +1148,10 @@ class Handler(BaseHTTPRequestHandler):
                 raw = (q.get("photo") or [""])[0]
                 if raw and "/" not in raw and ".." not in raw:
                     selected_photo = raw
+            theme = _parse_theme_cookie(self.headers.get("Cookie"))
             try:
-                body = render_index(flash=flash, selected_photo=selected_photo)
+                body = render_index(flash=flash, selected_photo=selected_photo,
+                                    theme=theme)
             except Exception as exc:
                 self._send(500, f"dashboard render failed: {exc}", "text/plain; charset=utf-8")
                 return
@@ -1075,9 +1172,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(404, "not found", "text/plain")
 
+    def _drain_body(self) -> None:
+        """Read & discard the POST body so the connection closes cleanly."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length:
+                self.rfile.read(length)
+        except Exception:
+            pass
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/theme/toggle":
+            self._drain_body()
+            current = _parse_theme_cookie(self.headers.get("Cookie"))
+            new_theme = "default" if current == "bloomberg" else "bloomberg"
+            self.send_response(303)
+            self.send_header("Location", "/")
+            # 1yr persistence; Lax is fine for a LAN-only dashboard
+            self.send_header(
+                "Set-Cookie",
+                f"theme={new_theme}; Path=/; Max-Age=31536000; SameSite=Lax",
+            )
+            self.end_headers()
+            return
+
         if not path.startswith("/trigger/"):
             self._send(404, "not found", "text/plain")
             return
@@ -1087,13 +1208,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, "unknown trigger", "text/plain")
             return
         kind, message = _trigger_service(service)
-        # consume any POST body (we don't use it, but read it to close the connection cleanly)
-        try:
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            if length:
-                self.rfile.read(length)
-        except Exception:
-            pass
+        self._drain_body()
         # redirect back to the dashboard with a flash message in the query string
         self.send_response(303)
         self.send_header("Location", f"/?flash={quote(kind)}&msg={quote(message)}")
