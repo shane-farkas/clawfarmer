@@ -15,7 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 DEFAULT_MODEL = "moondream"
 DEFAULT_PROMPT = (
     "Describe what you see in this image. Focus on plant condition, leaf "
@@ -44,10 +44,15 @@ def analyze_image(
     image_bytes = p.read_bytes()
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
+    # Use /api/chat — Ollama's /api/generate returns 200 OK with zero tokens
+    # for vision models (a known quirk).
     payload = {
         "model": model,
-        "prompt": prompt,
-        "images": [image_b64],
+        "messages": [{
+            "role": "user",
+            "content": prompt,
+            "images": [image_b64],
+        }],
         "stream": False,
     }
     body = json.dumps(payload).encode("utf-8")
@@ -80,7 +85,8 @@ def analyze_image(
         return {"ok": False, "error": f"bad JSON from ollama: {e}",
                 "at": _now_iso()}
 
-    observation = (data.get("response") or "").strip()
+    # /api/chat returns the generated text under message.content
+    observation = (((data.get("message") or {}).get("content")) or "").strip()
 
     return {
         "ok": True,
