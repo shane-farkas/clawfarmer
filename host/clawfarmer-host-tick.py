@@ -25,7 +25,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -59,6 +59,16 @@ PHOTO_REVIEW_CRON_ID = os.getenv("PHOTO_REVIEW_CRON_ID", "").strip()
 
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
+TICKER_FILE = WORKSPACE / "memory/basil-ticker.json"
+
+# BASIL.X pricing model — plant grown as a "stock" whose price per gram
+# floats around a Whole Foods baseline. Growth is path-dependent: each tick
+# accumulates mass based on current health, and price per gram reflects the
+# rolling 24h growth rate vs. the nominal rate of an ideal plant.
+NOMINAL_DAILY_G = 30.0 / 56          # ~0.536 g/day to reach 30g in 8 weeks
+BASE_PRICE_PER_G = 0.20              # Whole Foods organic basil, ~$0.20/g
+TICKER_MIN_TICK_HOURS = 0.92         # ~55 min — avoids double-appending
+TICKER_RETAIN_DAYS = 30              # trim tick history beyond 30 days
 
 
 def _now_iso() -> str:
@@ -272,6 +282,211 @@ def _update_day_range(state: dict, key: str, value: float, today_start: str) -> 
         dr["max"] = value if dr["max"] is None else max(dr["max"], value)
 
 
+def _ticker_health_score(state: dict) -> int:
+    """Same rubric as the dashboard's _compute_health, score-only (1..10).
+    Duplicated here so host-tick stays self-contained and the ticker can run
+    even if the dashboard process is down."""
+    readings = state.get("readings", {}) or {}
+    soil = (readings.get("soil_moisture") or {}).get("value")
+    temp = (readings.get("temp_f") or {}).get("value")
+    humidity = (readings.get("humidity_pct") or {}).get("value")
+
+    def _bucket(v, alert_lo, alert_hi, healthy_lo, healthy_hi, edge_lo, edge_hi):
+        if v is None:
+            return 3
+        if v < alert_lo or v > alert_hi:
+            return 3
+        if v < healthy_lo or v > healthy_hi:
+            return 2
+        if v < edge_lo or v > edge_hi:
+            return 1
+        return 0
+
+    score = 10
+    if soil is not None:
+        score -= _bucket(soil, 20, 85, 35, 70, 45, 65)
+    if humidity is not None:
+        score -= _bucket(humidity, 30, 80, 40, 60, 45, 55)
+    if temp is not None:
+        score -= _bucket(temp, 55, 95, 65, 85, 68, 82)
+
+    # Stale-readings guard — if we can't see the plant, it has no investor
+    # confidence. Score floors at 1.
+    updated_at = state.get("updated_at")
+    if updated_at:
+        try:
+            dt = datetime.fromisoformat(updated_at)
+            age_min = (datetime.now(dt.tzinfo) - dt).total_seconds() / 60
+            if age_min > 30:
+                score = 1
+        except Exception:
+            pass
+
+    return max(1, min(10, score))
+
+
+def _ticker_growth_multiplier(health: int) -> float:
+    """Health score → mass-growth multiplier. Healthy plants grow at nominal
+    rate; struggling plants grow slowly; dying plants lose mass."""
+    # health 10 → 1.0 (full growth)
+    # health 5  → 0.29 (slow)
+    # health 3  → 0.0  (maintenance)
+    # health 1  → -0.2 (wilting, clamped)
+    return max(-0.2, min(1.0, (health - 3) / 7))
+
+
+def _ticker_price_multiplier(rolling_daily_rate_g: float | None) -> float:
+    """Rolling 24h growth rate → price-per-gram multiplier vs. base. A plant
+    growing at the nominal rate trades at a ~15% premium to Whole Foods.
+    Flat/declining plants trade at a discount."""
+    if rolling_daily_rate_g is None:
+        return 1.0
+    ratio = rolling_daily_rate_g / NOMINAL_DAILY_G
+    return max(0.70, min(1.30, 0.85 + 0.30 * ratio))
+
+
+def _ticker_rolling_rate(ticks: list, now_dt: datetime,
+                          current_mass: float) -> float | None:
+    """Growth rate in g/day over the last 24h of ticks, linearly extrapolated.
+    Returns None when there's not enough history to estimate."""
+    if not ticks:
+        return None
+    cutoff = now_dt - timedelta(hours=24)
+    baseline = None
+    for t in ticks:
+        try:
+            t_dt = datetime.fromisoformat(t["at"])
+        except Exception:
+            continue
+        if t_dt >= cutoff:
+            baseline = t
+            break
+    if not baseline:
+        return None
+    base_dt = datetime.fromisoformat(baseline["at"])
+    hours = (now_dt - base_dt).total_seconds() / 3600
+    if hours < 1.0:
+        return None
+    return (current_mass - baseline["mass_g"]) * 24.0 / hours
+
+
+def _ticker_default_inception() -> str:
+    """Derive inception date from the oldest photo's mtime; fall back to
+    'now' if no photos have been captured yet. The value is saved once and
+    never recomputed, so the ticker's age stays stable."""
+    try:
+        if PHOTOS_DIR.exists():
+            photos = [
+                p for p in PHOTOS_DIR.iterdir()
+                if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+            ]
+            if photos:
+                oldest = min(photos, key=lambda p: p.stat().st_mtime)
+                return (
+                    datetime.fromtimestamp(oldest.stat().st_mtime)
+                    .astimezone()
+                    .isoformat(timespec="seconds")
+                )
+    except Exception:
+        pass
+    return _now_iso()
+
+
+def _load_ticker() -> dict:
+    if not TICKER_FILE.exists():
+        return {
+            "version": 1,
+            "inception_at": None,
+            "base_price_per_g": BASE_PRICE_PER_G,
+            "nominal_daily_g": NOMINAL_DAILY_G,
+            "mass_grams": 0.0,
+            "ticks": [],
+        }
+    try:
+        with open(TICKER_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {
+            "version": 1,
+            "inception_at": None,
+            "base_price_per_g": BASE_PRICE_PER_G,
+            "nominal_daily_g": NOMINAL_DAILY_G,
+            "mass_grams": 0.0,
+            "ticks": [],
+        }
+
+
+def _save_ticker(ticker: dict) -> None:
+    TICKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = TICKER_FILE.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(ticker, f, indent=2)
+    tmp.replace(TICKER_FILE)
+
+
+def _update_ticker(state: dict) -> None:
+    """Append a tick to the BASIL.X ticker if at least ~1h has passed since
+    the last one. Mass accrues path-dependently from the current health score;
+    price per gram floats on the rolling 24h growth rate."""
+    try:
+        ticker = _load_ticker()
+        now_iso = _now_iso()
+        now_dt = datetime.fromisoformat(now_iso)
+
+        if not ticker.get("inception_at"):
+            ticker["inception_at"] = _ticker_default_inception()
+
+        ticks = ticker.setdefault("ticks", [])
+        hours_since = None
+        if ticks:
+            try:
+                last_dt = datetime.fromisoformat(ticks[-1]["at"])
+                hours_since = (now_dt - last_dt).total_seconds() / 3600
+                if hours_since < TICKER_MIN_TICK_HOURS:
+                    return  # too soon, skip silently
+            except Exception:
+                hours_since = None
+
+        health = _ticker_health_score(state)
+        mass = float(ticker.get("mass_grams") or 0.0)
+        # First tick has no elapsed interval — record the starting mass with no delta
+        if hours_since is not None:
+            delta = (NOMINAL_DAILY_G * (hours_since / 24)
+                     * _ticker_growth_multiplier(health))
+            mass = max(0.0, mass + delta)
+
+        rolling = _ticker_rolling_rate(ticks, now_dt, mass)
+        price_per_g = BASE_PRICE_PER_G * _ticker_price_multiplier(rolling)
+
+        ticks.append({
+            "at": now_iso,
+            "mass_g": round(mass, 4),
+            "health": health,
+            "price_per_g": round(price_per_g, 5),
+        })
+
+        # Trim ticks beyond the retention window
+        cutoff = now_dt - timedelta(days=TICKER_RETAIN_DAYS)
+        ticker["ticks"] = [
+            t for t in ticks
+            if _safe_parse(t.get("at"), now_dt) > cutoff
+        ]
+        ticker["mass_grams"] = mass
+        _save_ticker(ticker)
+    except Exception as exc:
+        _record_error(state, "ticker",
+                      f"{type(exc).__name__}: {exc}")
+
+
+def _safe_parse(iso: str | None, fallback: datetime) -> datetime:
+    if not iso:
+        return fallback
+    try:
+        return datetime.fromisoformat(iso)
+    except Exception:
+        return fallback
+
+
 def cmd_sensors() -> None:
     state = _load_state()
     today = _today_start()
@@ -334,6 +549,7 @@ def cmd_sensors() -> None:
                 }
 
     _append_history_snapshot(state)
+    _update_ticker(state)
     _save_state(state)
     print(json.dumps({"ok": True, "action": "sensors", "at": state["updated_at"]}))
 
