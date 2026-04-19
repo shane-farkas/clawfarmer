@@ -154,7 +154,7 @@ def _wait_and_capture_review_summary(
         try:
             r = subprocess.run(
                 ["openclaw", "cron", "runs", "--id", cron_id,
-                 "--limit", "1", "--json"],
+                 "--limit", "1"],
                 capture_output=True, text=True, timeout=10,
             )
         except Exception:
