@@ -10,6 +10,12 @@ cd ~/clawfarmer && git pull
 sudo install -m 0755 dashboard/clawfarmer-dashboard.py /usr/local/bin/clawfarmer-dashboard
 sudo install -m 0644 dashboard/clawfarmer-dashboard.service /etc/systemd/system/
 
+# sudoers rule that lets the openclaw user trigger the two whitelisted
+# host-tick services without a password (photo + sensors). This is
+# scoped tight; it does NOT grant openclaw broader sudo.
+sudo install -m 0440 dashboard/clawfarmer-dashboard.sudoers /etc/sudoers.d/clawfarmer-dashboard
+sudo visudo -cf /etc/sudoers.d/clawfarmer-dashboard   # should print "parsed OK"
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now clawfarmer-dashboard
 systemctl status clawfarmer-dashboard --no-pager
@@ -35,6 +41,17 @@ Or use Claw's IP if mDNS is flaky on your network.
 - **Recent errors** (only shown if `last_errors[]` has entries)
 
 Auto-refreshes every 60s.
+
+## Manual triggers
+
+Two buttons at the top of the dashboard:
+
+- **📸 Take photo now** — POSTs to `/trigger/capture`, fires `clawfarmer-host-tick@photo.service`, redirects back with a flash message
+- **🌡️ Read sensors now** — POSTs to `/trigger/sensors`, fires `clawfarmer-host-tick@sensors.service`, redirects back
+
+After clicking, the capture takes ~30-60s (capture + scp + Moondream analysis) and the sensor sweep takes ~2-3s. The page's 60s auto-refresh will pick up the new reading / photo automatically.
+
+Both triggers go through `sudo -n systemctl start <whitelisted service>`, with the sudoers rule installed above scoping exactly those two commands for the `openclaw` user.
 
 ## Config (override via systemctl edit)
 

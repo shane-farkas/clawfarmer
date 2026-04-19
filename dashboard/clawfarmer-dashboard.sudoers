@@ -1,0 +1,16 @@
+# /etc/sudoers.d/clawfarmer-dashboard
+#
+# Allow the openclaw service user to trigger the two whitelisted host-tick
+# services without a password. Nothing else — this does NOT grant openclaw
+# broader sudo. The dashboard validates the target service against a
+# hard-coded allowlist before shelling out.
+#
+# Install:
+#   sudo install -m 0440 dashboard/clawfarmer-dashboard.sudoers \
+#       /etc/sudoers.d/clawfarmer-dashboard
+#
+# Verify with:
+#   sudo visudo -cf /etc/sudoers.d/clawfarmer-dashboard
+#   (should report: parsed OK)
+
+openclaw ALL=(root) NOPASSWD: /usr/bin/systemctl start clawfarmer-host-tick@photo.service, /usr/bin/systemctl start clawfarmer-host-tick@sensors.service
