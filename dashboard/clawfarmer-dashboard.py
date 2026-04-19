@@ -39,6 +39,7 @@ WORKSPACE = Path(os.getenv(
 ))
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
+RICH_ANALYSIS_FILE = WORKSPACE / "memory/last_rich_analysis.md"
 
 PORT = int(os.getenv("DASHBOARD_PORT", "8765"))
 BIND = os.getenv("DASHBOARD_BIND", "0.0.0.0")
@@ -123,6 +124,26 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
   border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
   line-height: 1.5; font-size: 14px;
 }}
+.health-card {{
+  margin-top: 12px; padding: 14px 16px; background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px;
+}}
+.health-score {{
+  font-size: 16px; font-weight: 600; display: flex; align-items: center;
+}}
+.health-number {{ font-size: 22px; margin-left: 4px; }}
+.health-alerts {{ margin: 10px 0 0; padding-left: 20px; font-size: 13px; color: #f87171; }}
+.health-alerts li {{ margin-bottom: 2px; list-style: none; margin-left: -20px; }}
+.health-suggestions {{ margin-top: 10px; font-size: 13px; line-height: 1.5; }}
+.health-section-label {{ color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }}
+.health-suggestions ul {{ margin: 0; padding-left: 20px; }}
+.health-suggestions li {{ margin-bottom: 3px; }}
+.rich-analysis {{
+  margin-top: 12px; padding: 14px 16px; background: var(--card);
+  border-left: 3px solid #c084fc; border-radius: 0 6px 6px 0;
+}}
+.rich-header {{ color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }}
+.rich-body {{ margin: 0; font-family: inherit; font-size: 14px; line-height: 1.5; white-space: pre-wrap; color: var(--text); }}
 .photo-meta {{ color: var(--dim); font-size: 12px; margin-top: 8px; }}
 .gallery {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }}
 .gallery a {{ display: block; background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-decoration: none; color: var(--text); transition: border-color 0.15s; }}
@@ -376,6 +397,164 @@ def _load_sidecar(filename: str) -> dict:
         return {}
 
 
+def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
+    """Return (score, alerts, suggestions) from current readings using the
+    same rubric as the 15-min sensor-sweep cron."""
+    readings = state.get("readings", {}) or {}
+    soil = (readings.get("soil_moisture") or {}).get("value")
+    temp = (readings.get("temp_f") or {}).get("value")
+    humidity = (readings.get("humidity_pct") or {}).get("value")
+    lux = (readings.get("lux") or {}).get("value")
+
+    score = 10
+    alerts: list[str] = []
+    suggestions: list[str] = []
+
+    def _bucket(v, alert_lo, alert_hi, healthy_lo, healthy_hi, edge_lo, edge_hi):
+        """Return 3 (alert), 2 (outside healthy), 1 (edge), or 0 (ideal)."""
+        if v is None:
+            return 3
+        if v < alert_lo or v > alert_hi:
+            return 3
+        if v < healthy_lo or v > healthy_hi:
+            return 2
+        if v < edge_lo or v > edge_hi:
+            return 1
+        return 0
+
+    # Soil: alert <20 or >85, healthy 35-70, edge <45 or >65
+    if soil is not None:
+        score -= _bucket(soil, 20, 85, 35, 70, 45, 65)
+        if soil < 20:
+            alerts.append(f"⚠️ soil {soil:.1f}% < 20 (critically dry)")
+            suggestions.append(f"Water immediately — soil at {soil:.1f}%, target 40–70%")
+        elif soil < 35:
+            suggestions.append(f"Water soon — soil at {soil:.1f}%, target 40–70%")
+        elif soil > 85:
+            alerts.append(f"⚠️ soil {soil:.1f}% > 85 (waterlogged)")
+            suggestions.append("Check drainage — possible waterlogged roots")
+        elif soil > 70:
+            suggestions.append(f"Hold water — soil at {soil:.1f}%, let it dry below 70%")
+
+    # Humidity: alert <30 or >80, healthy 40-60, edge <45 or >55
+    if humidity is not None:
+        score -= _bucket(humidity, 30, 80, 40, 60, 45, 55)
+        if humidity < 30:
+            alerts.append(f"⚠️ humidity {humidity:.1f}% < 30")
+            suggestions.append("Raise humidity — humidifier, pebble tray, or group with other plants")
+        elif humidity < 40:
+            suggestions.append("Raise humidity gently — aim for 40–60%")
+        elif humidity > 80:
+            alerts.append(f"⚠️ humidity {humidity:.1f}% > 80")
+            suggestions.append("Increase airflow — fan or open a window")
+        elif humidity > 60:
+            suggestions.append("Increase airflow — fan or open a window")
+
+    # Temp: alert <55 or >95, healthy 65-85, edge <68 or >82
+    if temp is not None:
+        score -= _bucket(temp, 55, 95, 65, 85, 68, 82)
+        if temp < 55:
+            alerts.append(f"⚠️ temp {temp:.1f}°F < 55")
+            suggestions.append("Move to a warmer spot")
+        elif temp < 65:
+            suggestions.append("Move to a warmer spot (basil prefers 70–85°F)")
+        elif temp > 95:
+            alerts.append(f"⚠️ temp {temp:.1f}°F > 95")
+            suggestions.append("Move away from heat source or add airflow")
+        elif temp > 85:
+            suggestions.append("Move away from heat source or add airflow")
+
+    # Stale data check
+    updated_at = state.get("updated_at")
+    if updated_at:
+        try:
+            dt = datetime.fromisoformat(updated_at)
+            age_min = (datetime.now(dt.tzinfo) - dt).total_seconds() / 60
+            if age_min > 30:
+                score = 1
+                alerts.append(f"⚠️ readings stale {age_min:.0f} min old")
+                suggestions.insert(0, "Check sensor connectivity — readings are stale")
+        except Exception:
+            pass
+
+    # Light: doesn't affect score but produces a suggestion if very low during day
+    if lux is not None and lux < 1000:
+        try:
+            now = datetime.now()
+            if 8 <= now.hour <= 20:
+                suggestions.append("Add a grow light or move to a brighter spot")
+        except Exception:
+            pass
+
+    score = max(1, min(10, score))
+    return score, alerts, suggestions[:3]
+
+
+def _render_rich_analysis_block() -> str:
+    """Read memory/last_rich_analysis.md (written by photo-review cron) and
+    render it as its own block if present and fresh (<12h old)."""
+    if not RICH_ANALYSIS_FILE.exists():
+        return ""
+    try:
+        stat = RICH_ANALYSIS_FILE.stat()
+        age_hours = (datetime.now().timestamp() - stat.st_mtime) / 3600
+        if age_hours > 12:
+            return ""  # stale, don't mislead the viewer with old analysis
+        content = RICH_ANALYSIS_FILE.read_text().strip()
+        if not content:
+            return ""
+    except Exception:
+        return ""
+    # escape only < > & since the content may contain emoji + plain text
+    content_html = (content.replace("&", "&amp;")
+                           .replace("<", "&lt;")
+                           .replace(">", "&gt;"))
+    age_label = f"{int(age_hours * 60)} min ago" if age_hours < 1 else f"{age_hours:.1f}h ago"
+    return f'''
+    <div class="rich-analysis">
+      <div class="rich-header">Latest AI summary · {age_label}</div>
+      <pre class="rich-body">{content_html}</pre>
+    </div>'''
+
+
+def _render_health_block(state: dict) -> str:
+    score, alerts, suggestions = _compute_health(state)
+    # score color
+    if score >= 8:
+        score_class = "good"
+    elif score >= 5:
+        score_class = "warn"
+    else:
+        score_class = "bad"
+
+    alerts_html = ""
+    if alerts:
+        items = "".join(f"<li>{a}</li>" for a in alerts)
+        alerts_html = f'<ul class="health-alerts">{items}</ul>'
+
+    suggestions_html = ""
+    if suggestions:
+        items = "".join(f"<li>{s}</li>" for s in suggestions)
+        suggestions_html = f'''
+    <div class="health-suggestions">
+      <div class="health-section-label">💡 To raise the score</div>
+      <ul>{items}</ul>
+    </div>'''
+    else:
+        if score == 10:
+            suggestions_html = '<div class="health-suggestions"><em>Plant looks healthy — no action needed.</em></div>'
+
+    return f'''
+    <div class="health-card">
+      <div class="health-score">
+        <span class="dot {score_class}"></span>
+        Plant health: <span class="health-number">{score}</span>/10
+      </div>
+      {alerts_html}
+      {suggestions_html}
+    </div>'''
+
+
 def _render_photo_block(state: dict, selected_filename: str | None = None) -> str:
     # if ?photo=<filename> is in the query, look up the sidecar; otherwise use
     # the live last_photo from state
@@ -418,6 +597,11 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
                      'style="color: var(--accent); text-decoration: none; '
                      'font-size: 12px;">← back to latest</a>')
 
+    # health block + rich analysis show for the LATEST photo only. Both
+    # reflect current (live) state, not state at historical-photo capture time.
+    health_html = _render_health_block(state) if not is_historical else ""
+    rich_html = _render_rich_analysis_block() if not is_historical else ""
+
     return f"""
     <div class="photo-primary">
       <a href="/photos/{quote(filename)}" target="_blank" title="open full-size">
@@ -425,6 +609,8 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
       </a>
     </div>
     {obs_html}
+    {rich_html}
+    {health_html}
     <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
     """
 
