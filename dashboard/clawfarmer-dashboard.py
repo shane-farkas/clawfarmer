@@ -114,6 +114,7 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
 .gallery {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }}
 .gallery a {{ display: block; background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-decoration: none; color: var(--text); transition: border-color 0.15s; }}
 .gallery a:hover {{ border-color: var(--accent); }}
+.gallery a.selected {{ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.3); }}
 .gallery img {{ width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; }}
 .gallery-caption {{ padding: 6px 8px; font-size: 11px; color: var(--dim); }}
 .errors {{ border-left: 3px solid var(--bad); padding-left: 12px; font-size: 12px; color: var(--dim); }}
@@ -344,26 +345,73 @@ def _render_charts(state: dict) -> str:
     return "".join(charts)
 
 
-def _render_photo_block(state: dict) -> str:
-    lp = state.get("last_photo") or {}
+def _load_sidecar(filename: str) -> dict:
+    """Look up a photo's sidecar JSON (observation + metadata) if it exists."""
+    if not filename:
+        return {}
+    path = PHOTOS_DIR / f"{filename}.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _render_photo_block(state: dict, selected_filename: str | None = None) -> str:
+    # if ?photo=<filename> is in the query, look up the sidecar; otherwise use
+    # the live last_photo from state
+    lp: dict
+    is_historical = False
+    if selected_filename:
+        sidecar = _load_sidecar(selected_filename)
+        if sidecar:
+            lp = {
+                "filename": selected_filename,
+                "at": sidecar.get("captured_at"),
+                "observation": sidecar.get("observation", ""),
+                "analysis_model": sidecar.get("analysis_model"),
+            }
+        else:
+            # photo exists but was captured before sidecars were introduced —
+            # show the image with an explanatory note instead of an observation
+            lp = {"filename": selected_filename, "observation": None}
+        is_historical = True
+    else:
+        lp = state.get("last_photo") or {}
+
     filename = lp.get("filename")
     if not filename:
         return '<p class="empty">No photos captured yet.</p>'
-    obs = (lp.get("observation") or "").strip() or "— no observation yet —"
+
+    obs_raw = lp.get("observation")
+    if obs_raw is None and is_historical:
+        obs_html = ('<div class="observation"><em>No saved observation for this photo '
+                    '(captured before per-photo analysis was added).</em></div>')
+    else:
+        obs_text = (obs_raw or "").strip() or "— no observation yet —"
+        obs_html = f'<div class="observation">{obs_text}</div>'
+
     at = _fmt_time(lp.get("at"))
     model = lp.get("analysis_model", "—")
+    back_link = ""
+    if is_historical:
+        back_link = (' <a href="/" class="back-link" '
+                     'style="color: var(--accent); text-decoration: none; '
+                     'font-size: 12px;">← back to latest</a>')
+
     return f"""
     <div class="photo-primary">
-      <a href="/photos/{quote(filename)}" target="_blank">
-        <img src="/photos/{quote(filename)}" alt="latest plant photo">
+      <a href="/photos/{quote(filename)}" target="_blank" title="open full-size">
+        <img src="/photos/{quote(filename)}" alt="plant photo">
       </a>
     </div>
-    <div class="observation">{obs}</div>
-    <div class="photo-meta">{filename} · captured {at} · analyzed by {model}</div>
+    {obs_html}
+    <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
     """
 
 
-def _render_gallery() -> str:
+def _render_gallery(selected_filename: str | None = None) -> str:
     if not PHOTOS_DIR.exists():
         return '<p class="empty">Photos directory not found.</p>'
     files = [f for f in PHOTOS_DIR.iterdir()
@@ -375,8 +423,11 @@ def _render_gallery() -> str:
     tiles = []
     for f in files:
         ts = datetime.fromtimestamp(f.stat().st_mtime).strftime("%b %d · %I:%M %p")
+        # click loads the photo at the top instead of opening the raw image
+        is_selected = (f.name == selected_filename)
+        cls = ' class="selected"' if is_selected else ""
         tiles.append(
-            f'<a href="/photos/{quote(f.name)}" target="_blank">'
+            f'<a href="/?photo={quote(f.name)}"{cls} title="view at top">'
             f'<img src="/photos/{quote(f.name)}" loading="lazy" alt="">'
             f'<div class="gallery-caption">{ts}</div></a>'
         )
@@ -414,7 +465,8 @@ def _render_errors(state: dict) -> str:
 </section>"""
 
 
-def render_index(flash: tuple[str, str] | None = None) -> str:
+def render_index(flash: tuple[str, str] | None = None,
+                 selected_photo: str | None = None) -> str:
     state = _load_state()
     readings = state.get("readings", {}) or {}
     ranges = state.get("day_ranges", {}) or {}
@@ -437,8 +489,8 @@ def render_index(flash: tuple[str, str] | None = None) -> str:
         updated_at=_fmt_time(state.get("updated_at")),
         reading_cards="".join(cards),
         charts_block=_render_charts(state),
-        photo_block=_render_photo_block(state),
-        gallery=_render_gallery(),
+        photo_block=_render_photo_block(state, selected_filename=selected_photo),
+        gallery=_render_gallery(selected_filename=selected_photo),
         watering_count=len(state.get("watering_history", []) or []),
         watering_block=_render_watering(state),
         errors_block=_render_errors(state),
@@ -488,16 +540,21 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         if path in ("/", "/index.html"):
             # ?flash=ok&msg=... comes back from the POST redirect
+            # ?photo=<filename> selects a gallery photo to feature at the top
             flash = None
-            if "flash=" in (parsed.query or ""):
+            selected_photo = None
+            if parsed.query:
                 from urllib.parse import parse_qs
                 q = parse_qs(parsed.query)
                 kind = (q.get("flash") or [""])[0]
                 msg = (q.get("msg") or [""])[0]
                 if kind and msg:
                     flash = (kind, msg)
+                raw = (q.get("photo") or [""])[0]
+                if raw and "/" not in raw and ".." not in raw:
+                    selected_photo = raw
             try:
-                body = render_index(flash=flash)
+                body = render_index(flash=flash, selected_photo=selected_photo)
             except Exception as exc:
                 self._send(500, f"dashboard render failed: {exc}", "text/plain; charset=utf-8")
                 return
