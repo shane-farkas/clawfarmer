@@ -291,10 +291,43 @@ def cmd_photo() -> None:
         sys.exit(1)
 
     state["last_photo"] = {"filename": filename, "at": data.get("at")}
+
+    # Second step: ask the Jetson's local vision model to describe the photo.
+    # This runs on the Jetson via Ollama; the observation lands in state so
+    # the photo-review cron on the agent side can just read + relay.
+    try:
+        rc3, out3, err3 = _ssh(
+            JETSON_KEY, JETSON_USER, JETSON_HOST,
+            f"{JETSON_VENV_PYTHON} -m clawfarmer_jetson analyze "
+            f"--image {JETSON_PHOTO_DIR}/{filename}",
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        _record_error(state, "jetson/analyze", "ssh to analyze timed out")
+    except Exception as exc:
+        _record_error(state, "jetson/analyze", f"{type(exc).__name__}: {exc}")
+    else:
+        if rc3 != 0:
+            _record_error(state, "jetson/analyze", (err3 or out3).strip())
+        else:
+            try:
+                ana = json.loads(out3.strip())
+                if ana.get("ok"):
+                    state["last_photo"]["observation"] = ana.get("observation", "")
+                    state["last_photo"]["analysis_model"] = ana.get("model")
+                    state["last_photo"]["analyzed_at"] = ana.get("at")
+                else:
+                    _record_error(state, "jetson/analyze",
+                                  ana.get("error", "analyze ok:false"))
+            except json.JSONDecodeError as exc:
+                _record_error(state, "jetson/analyze",
+                              f"bad JSON: {exc}; out={out3!r}")
+
     _save_state(state)
     print(json.dumps({
         "ok": True, "action": "photo",
         "filename": filename, "size_bytes": data.get("size_bytes"),
+        "has_observation": bool(state["last_photo"].get("observation")),
     }))
 
 
