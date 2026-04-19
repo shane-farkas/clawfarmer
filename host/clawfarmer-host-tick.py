@@ -111,10 +111,30 @@ def _default_state() -> dict:
         },
         "grow_light": {"state": "unknown", "last_toggled_at": None},
         "watering_history": [],
+        "readings_history": [],
         "last_photo": {"filename": None, "at": None},
         "active_detections": [],
         "last_errors": [],
     }
+
+
+def _append_history_snapshot(state: dict) -> None:
+    """Append a compact snapshot of current readings to readings_history.
+    Trimmed to last 48 entries — 12 hours at the 15-min sweep cadence."""
+    r = state.get("readings", {}) or {}
+    snap = {
+        "at": _now_iso(),
+        "soil_moisture": (r.get("soil_moisture") or {}).get("value"),
+        "temp_f": (r.get("temp_f") or {}).get("value"),
+        "humidity_pct": (r.get("humidity_pct") or {}).get("value"),
+        "lux": (r.get("lux") or {}).get("value"),
+    }
+    # skip snapshots where every reading is None (no useful data)
+    if all(snap[k] is None for k in ("soil_moisture", "temp_f", "humidity_pct", "lux")):
+        return
+    hist = state.setdefault("readings_history", [])
+    hist.append(snap)
+    state["readings_history"] = hist[-48:]
 
 
 def _load_state() -> dict:
@@ -224,6 +244,7 @@ def cmd_sensors() -> None:
                     "value": val, "unit": "lux", "at": at, "stale": False,
                 }
 
+    _append_history_snapshot(state)
     _save_state(state)
     print(json.dumps({"ok": True, "action": "sensors", "at": state["updated_at"]}))
 
