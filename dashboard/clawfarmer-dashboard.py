@@ -128,14 +128,20 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
 .health-card {{
   margin-top: 12px; padding: 14px 16px; background: var(--card);
   border: 1px solid var(--border); border-radius: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 20px; align-items: start;
 }}
+@media (max-width: 720px) {{ .health-card {{ grid-template-columns: 1fr; }} }}
+.health-left {{ min-width: 0; }}
+.health-right {{ min-width: 0; border-left: 1px solid var(--border); padding-left: 20px; }}
+@media (max-width: 720px) {{ .health-right {{ border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 14px; }} }}
 .health-score {{
   font-size: 16px; font-weight: 600; display: flex; align-items: center;
 }}
 .health-number {{ font-size: 22px; margin-left: 4px; }}
 .health-alerts {{ margin: 10px 0 0; padding-left: 20px; font-size: 13px; color: #f87171; }}
 .health-alerts li {{ margin-bottom: 2px; list-style: none; margin-left: -20px; }}
-.health-suggestions {{ margin-top: 10px; font-size: 13px; line-height: 1.5; }}
+.health-suggestions {{ font-size: 13px; line-height: 1.5; }}
 .health-section-label {{ color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }}
 .health-suggestions ul {{ margin: 0; padding-left: 20px; }}
 .health-suggestions li {{ margin-bottom: 3px; }}
@@ -548,12 +554,16 @@ def _render_health_block(state: dict) -> str:
 
     return f'''
     <div class="health-card">
-      <div class="health-score">
-        <span class="dot {score_class}"></span>
-        Plant health: <span class="health-number">{score}</span>/10
+      <div class="health-left">
+        <div class="health-score">
+          <span class="dot {score_class}"></span>
+          Plant health: <span class="health-number">{score}</span>/10
+        </div>
+        {alerts_html}
       </div>
-      {alerts_html}
-      {suggestions_html}
+      <div class="health-right">
+        {suggestions_html}
+      </div>
     </div>'''
 
 
