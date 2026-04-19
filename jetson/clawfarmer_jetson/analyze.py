@@ -16,13 +16,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-DEFAULT_MODEL = "moondream"
-DEFAULT_PROMPT = "Describe the plant in this image, its leaf color and condition."
-# Kept deliberately short + direct. Small vision models (Moondream especially)
-# bail out to a stop token on multi-clause, conditional prompts like "if X, say
-# Y, otherwise describe Z". Direct imperative single-sentence prompts produce
-# real output. If this default is too shallow, tune per-cron via --prompt
-# rather than bloating this default.
+DEFAULT_MODEL = "gemma3:4b"
+DEFAULT_PROMPT = (
+    "Describe the plant in this image in 3-5 short lines. "
+    "Cover leaf color, leaf condition, visible growth/posture, and anything "
+    "notable like flowering, pests, or stress. Do NOT include a preamble like "
+    "'Here is a description' — go straight into the observation."
+)
+# Gemma3:4b produces structured labeled output and correctly IDs common crops.
+# Moondream remains as a fallback (smaller, faster, less detailed). Both work
+# on Orin Nano 8GB once the desktop is disabled; Gemma needs num_ctx capped.
 
 
 def _now_iso() -> str:
@@ -46,10 +49,12 @@ def analyze_image(
 
     # Use /api/chat — Ollama's /api/generate returns 200 OK with zero tokens
     # for vision models (a known quirk).
-    # keep_alive=0 unloads Moondream immediately after the response — on
+    # keep_alive=0 unloads the model immediately after the response — on
     # Orin Nano 8GB the camera pipeline (nvarguscamerasrc) needs that GPU
     # memory back or the next capture fails. Trades ~20s reload time on
     # the next analyze call for a reliable camera path.
+    # num_ctx=2048 caps the KV cache — Gemma3:4b's default context would
+    # OOM the allocator even though the weights fit.
     payload = {
         "model": model,
         "messages": [{
@@ -59,6 +64,7 @@ def analyze_image(
         }],
         "stream": False,
         "keep_alive": 0,
+        "options": {"num_ctx": 2048},
     }
     body = json.dumps(payload).encode("utf-8")
 
