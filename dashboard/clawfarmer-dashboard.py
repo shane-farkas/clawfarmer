@@ -885,6 +885,12 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
     # rich analysis shows for the LATEST photo only (always-current sensor state).
     rich_html = _render_rich_analysis_block() if not is_historical else ""
 
+    # Hide the blue Gemma observation card for the LIVE latest photo — the
+    # purple AI summary already includes a richer paraphrase of the same info.
+    # Keep it for historical photos from the gallery (those have no rich
+    # analysis, so the sidecar observation is the only description available).
+    visible_obs_html = obs_html if is_historical else ""
+
     return f"""
     <div class="photo-split">
       <div class="photo-primary">
@@ -893,7 +899,7 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
         </a>
       </div>
       <div class="photo-text">
-        {obs_html}
+        {visible_obs_html}
         {rich_html}
         <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
       </div>
