@@ -17,12 +17,12 @@ from pathlib import Path
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 DEFAULT_MODEL = "moondream"
-DEFAULT_PROMPT = (
-    "Describe what you see in this image. Focus on plant condition, leaf "
-    "color, posture, and anything notable like flowering, pests, or soil "
-    "issues. If there is no plant visible, say so clearly and describe what "
-    "the camera is aimed at instead. Keep it to 3-5 sentences."
-)
+DEFAULT_PROMPT = "Describe the plant in this image, its leaf color and condition."
+# Kept deliberately short + direct. Small vision models (Moondream especially)
+# bail out to a stop token on multi-clause, conditional prompts like "if X, say
+# Y, otherwise describe Z". Direct imperative single-sentence prompts produce
+# real output. If this default is too shallow, tune per-cron via --prompt
+# rather than bloating this default.
 
 
 def _now_iso() -> str:
