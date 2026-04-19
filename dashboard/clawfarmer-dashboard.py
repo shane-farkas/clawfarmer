@@ -93,14 +93,15 @@ h1 {{ margin: 0 0 4px; font-size: 22px; font-weight: 600; }}
 .dot.bad  {{ background: var(--bad);  box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }}
 section {{ margin-bottom: 28px; }}
 section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 12px; font-weight: 600; }}
-.photo-layout {{
+.photo-split {{
   display: grid;
-  grid-template-columns: minmax(360px, 560px) 1fr;
+  grid-template-columns: minmax(300px, 520px) 1fr;
   gap: 20px;
-  margin-bottom: 28px;
+  align-items: start;
 }}
-.photo-layout section {{ margin-bottom: 0; }}
-@media (max-width: 820px) {{ .photo-layout {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 820px) {{ .photo-split {{ grid-template-columns: 1fr; }} }}
+.health-banner {{ margin-bottom: 24px; }}
+.health-banner .health-card {{ margin-top: 0; }}
 .photo-primary img {{ width: 100%; border-radius: 8px; display: block; border: 1px solid var(--border); }}
 .charts {{
   display: grid;
@@ -189,6 +190,8 @@ ul.watering li:last-child {{ border-bottom: none; }}
 
 {flash_block}
 
+<div class="health-banner">{health_banner}</div>
+
 <section>
   <h2>Current readings</h2>
   <div class="grid">{reading_cards}</div>
@@ -199,16 +202,15 @@ ul.watering li:last-child {{ border-bottom: none; }}
   <div class="charts">{charts_block}</div>
 </section>
 
-<div class="photo-layout">
-  <section>
-    <h2>Latest photo</h2>
-    {photo_block}
-  </section>
-  <section>
-    <h2>Recent photos</h2>
-    {gallery}
-  </section>
-</div>
+<section>
+  <h2>Latest photo</h2>
+  {photo_block}
+</section>
+
+<section>
+  <h2>Recent photos</h2>
+  {gallery}
+</section>
 
 <section>
   <h2>Watering history ({watering_count})</h2>
@@ -597,21 +599,22 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
                      'style="color: var(--accent); text-decoration: none; '
                      'font-size: 12px;">← back to latest</a>')
 
-    # health block + rich analysis show for the LATEST photo only. Both
-    # reflect current (live) state, not state at historical-photo capture time.
-    health_html = _render_health_block(state) if not is_historical else ""
+    # rich analysis shows for the LATEST photo only (always-current sensor state).
     rich_html = _render_rich_analysis_block() if not is_historical else ""
 
     return f"""
-    <div class="photo-primary">
-      <a href="/photos/{quote(filename)}" target="_blank" title="open full-size">
-        <img src="/photos/{quote(filename)}" alt="plant photo">
-      </a>
+    <div class="photo-split">
+      <div class="photo-primary">
+        <a href="/photos/{quote(filename)}" target="_blank" title="open full-size">
+          <img src="/photos/{quote(filename)}" alt="plant photo">
+        </a>
+      </div>
+      <div class="photo-text">
+        {obs_html}
+        {rich_html}
+        <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
+      </div>
     </div>
-    {obs_html}
-    {rich_html}
-    {health_html}
-    <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
     """
 
 
@@ -689,6 +692,8 @@ def render_index(flash: tuple[str, str] | None = None,
         kind, message = flash
         css = "flash error" if kind == "error" else "flash"
         flash_block = f'<div class="{css}">{message}</div>'
+    # Health banner always reflects CURRENT state (not the selected photo's era)
+    health_banner = _render_health_block(state) if selected_photo is None else ""
     return HTML_TEMPLATE.format(
         updated_at=_fmt_time(state.get("updated_at")),
         reading_cards="".join(cards),
@@ -699,6 +704,7 @@ def render_index(flash: tuple[str, str] | None = None,
         watering_block=_render_watering(state),
         errors_block=_render_errors(state),
         flash_block=flash_block,
+        health_banner=health_banner,
     )
 
 
