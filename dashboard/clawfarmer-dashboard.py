@@ -20,10 +20,18 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, quote
+
+# Services the dashboard is allowed to kick off via sudo systemctl start.
+# These are whitelisted — nothing else can be triggered over HTTP.
+TRIGGERABLE_SERVICES = {
+    "capture": "clawfarmer-host-tick@photo.service",
+    "sensors": "clawfarmer-host-tick@sensors.service",
+}
 
 WORKSPACE = Path(os.getenv(
     "CLAWFARMER_WORKSPACE",
@@ -96,11 +104,33 @@ section h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1px; c
 ul.watering {{ list-style: none; padding: 0; margin: 0; }}
 ul.watering li {{ padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; }}
 ul.watering li:last-child {{ border-bottom: none; }}
+.toolbar {{ display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }}
+.toolbar form {{ margin: 0; }}
+.toolbar button {{
+  font: inherit; color: var(--text);
+  background: var(--card); border: 1px solid var(--border);
+  padding: 8px 14px; border-radius: 6px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}}
+.toolbar button:hover {{ background: #232d38; border-color: var(--accent); }}
+.toolbar button:active {{ transform: translateY(1px); }}
+.flash {{
+  padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
+  background: rgba(96, 165, 250, 0.1); border-left: 3px solid var(--accent);
+  font-size: 13px;
+}}
+.flash.error {{ background: rgba(239, 68, 68, 0.1); border-left-color: var(--bad); }}
 </style>
 </head>
 <body>
 <h1>🌿 clawfarmer</h1>
 <div class="updated">last updated {updated_at} · auto-refresh every 60s</div>
+
+{flash_block}
+<div class="toolbar">
+  <form method="post" action="/trigger/capture"><button type="submit">📸 Take photo now</button></form>
+  <form method="post" action="/trigger/sensors"><button type="submit">🌡️ Read sensors now</button></form>
+</div>
 
 <section>
   <h2>Current readings</h2>
@@ -251,7 +281,7 @@ def _render_errors(state: dict) -> str:
 </section>"""
 
 
-def render_index() -> str:
+def render_index(flash: tuple[str, str] | None = None) -> str:
     state = _load_state()
     readings = state.get("readings", {}) or {}
     ranges = state.get("day_ranges", {}) or {}
@@ -265,6 +295,11 @@ def render_index() -> str:
         _render_reading("lux", readings.get("lux", {}),
                         None, "Light", "lux", fmt="{:.0f}"),
     ]
+    flash_block = ""
+    if flash:
+        kind, message = flash
+        css = "flash error" if kind == "error" else "flash"
+        flash_block = f'<div class="{css}">{message}</div>'
     return HTML_TEMPLATE.format(
         updated_at=_fmt_time(state.get("updated_at")),
         reading_cards="".join(cards),
@@ -273,7 +308,26 @@ def render_index() -> str:
         watering_count=len(state.get("watering_history", []) or []),
         watering_block=_render_watering(state),
         errors_block=_render_errors(state),
+        flash_block=flash_block,
     )
+
+
+def _trigger_service(service: str) -> tuple[str, str]:
+    """Fire a whitelisted systemd service. Returns (kind, message)."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", service],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return "error", f"Timed out triggering {service}."
+    except Exception as exc:
+        return "error", f"Failed to trigger {service}: {type(exc).__name__}: {exc}"
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()[:300]
+        return "error", f"systemctl exited {result.returncode} for {service}: {err}"
+    label = "Photo capture" if "photo" in service else "Sensor sweep"
+    return "ok", f"{label} triggered — new readings will appear within ~30-60s. Refresh to see."
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -291,10 +345,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path in ("/", "/index.html"):
+            # ?flash=ok&msg=... comes back from the POST redirect
+            flash = None
+            if "flash=" in (parsed.query or ""):
+                from urllib.parse import parse_qs
+                q = parse_qs(parsed.query)
+                kind = (q.get("flash") or [""])[0]
+                msg = (q.get("msg") or [""])[0]
+                if kind and msg:
+                    flash = (kind, msg)
             try:
-                body = render_index()
+                body = render_index(flash=flash)
             except Exception as exc:
                 self._send(500, f"dashboard render failed: {exc}", "text/plain; charset=utf-8")
                 return
@@ -314,6 +378,30 @@ class Handler(BaseHTTPRequestHandler):
                        extra_headers={"Cache-Control": "public, max-age=600"})
             return
         self._send(404, "not found", "text/plain")
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if not path.startswith("/trigger/"):
+            self._send(404, "not found", "text/plain")
+            return
+        key = path[len("/trigger/"):]
+        service = TRIGGERABLE_SERVICES.get(key)
+        if not service:
+            self._send(400, "unknown trigger", "text/plain")
+            return
+        kind, message = _trigger_service(service)
+        # consume any POST body (we don't use it, but read it to close the connection cleanly)
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length:
+                self.rfile.read(length)
+        except Exception:
+            pass
+        # redirect back to the dashboard with a flash message in the query string
+        self.send_response(303)
+        self.send_header("Location", f"/?flash={quote(kind)}&msg={quote(message)}")
+        self.end_headers()
 
     def log_message(self, fmt: str, *args) -> None:
         # suppress default access logs; systemd journal stays readable
