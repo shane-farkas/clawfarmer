@@ -18,6 +18,9 @@ Environment=JETSON_KEY=/var/lib/openclaw/.ssh/id_ed25519_plantjetson
 Environment=SOIL_CHANNEL=0
 Environment=SOIL_DRY_RAW=26000
 Environment=SOIL_WET_RAW=12000
+# Optional — if set, each successful photo capture triggers this cron job
+# (used to refresh the rich photo-review analysis on every capture).
+Environment=PHOTO_REVIEW_CRON_ID={{PHOTO_REVIEW_CRON_ID}}
 ExecStart=/usr/local/bin/clawfarmer-host-tick %I
 StandardOutput=journal
 StandardError=journal
