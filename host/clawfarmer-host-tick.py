@@ -337,6 +337,24 @@ def cmd_photo() -> None:
                     state["last_photo"]["observation"] = ana.get("observation", "")
                     state["last_photo"]["analysis_model"] = ana.get("model")
                     state["last_photo"]["analyzed_at"] = ana.get("at")
+                    # sidecar JSON so the dashboard can look up per-photo
+                    # observation when the user clicks an older gallery thumbnail
+                    sidecar_payload = {
+                        "filename": filename,
+                        "captured_at": data.get("at"),
+                        "observation": ana.get("observation", ""),
+                        "analysis_model": ana.get("model"),
+                        "analyzed_at": ana.get("at"),
+                        "size_bytes": data.get("size_bytes"),
+                    }
+                    try:
+                        sidecar_path = PHOTOS_DIR / f"{filename}.json"
+                        sidecar_path.write_text(
+                            json.dumps(sidecar_payload, indent=2)
+                        )
+                    except Exception as exc:
+                        _record_error(state, "sidecar-write",
+                                      f"{type(exc).__name__}: {exc}")
                 else:
                     _record_error(state, "jetson/analyze",
                                   ana.get("error", "analyze ok:false"))
