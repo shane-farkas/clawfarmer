@@ -245,6 +245,15 @@ def _compose_rich_prompt(state: dict) -> str:
     except Exception:
         local_time = "now"
 
+    dark_mode = isinstance(lux, (int, float)) and lux < 20
+
+    if dark_mode:
+        photo_line_instruction = '"Image is too dark to assess — looks like nighttime." (the grow lights are off; do not describe the plant)'
+        visual_rule = f"THE IMAGE IS DARK. Light sensor reads {lux:.0f} lux, so the grow lights are off and the frame will be effectively black. DO NOT describe the plant visually. Write exactly: \"Image is too dark to assess — looks like nighttime.\" on the 📸 line, and base the Assessment on sensor readings only."
+    else:
+        photo_line_instruction = "1-2 sentence paraphrase of what you actually see in the image (leaf color, posture, any visible issues)"
+        visual_rule = f"THE IMAGE IS LIT. Light sensor reads {lux:.0f} lux, so the plant should be clearly visible. Describe what you see. Do NOT say the image is dark or looks like nighttime — that escape hatch is reserved for when the grow lights are off."
+
     return f"""You are helping monitor a basil plant. Produce a concise plant check based on the attached image AND the sensor readings below.
 
 CURRENT SENSOR READINGS:
@@ -259,12 +268,12 @@ BASIL CARE THRESHOLDS:
 - humidity: 40–60% ideal, flag below 30 or above 80
 - light: want 14–16 hours under grow lights or 6–8 hours direct sun
 
-IMPORTANT — dark/nighttime images: if the image is too dark to make out the plant (mostly black, no discernible leaves or detail), DO NOT invent a description. Say something like "Image is too dark to assess — looks like nighttime." on the 📸 line and skip visual claims in the Assessment. Base the Assessment on sensor readings only and note that a visual check will be possible once lights are on.
+IMPORTANT — visual handling rule: {visual_rule}
 
 Output EXACTLY this structure, 15 lines max, no preamble, no meta-commentary:
 
 🌿 Plant check — {local_time}
-📸 <1-2 sentence paraphrase of what you see in the image, OR "Image is too dark to assess — looks like nighttime." if the frame is effectively black>
+📸 <{photo_line_instruction}>
 
 📊 Last 12h:
 • soil: {soil:.1f}% (trend description, target 40–70%)
@@ -273,7 +282,7 @@ Output EXACTLY this structure, 15 lines max, no preamble, no meta-commentary:
 • light: <note only if unusually low or high>
 
 🔍 Assessment:
-2-3 sentences that SYNTHESIZE the photo and the sensor readings. Cross-reference visible symptoms with sensor data. Example: wilting + wet soil → root issue from waterlogging (not dehydration); yellowing + low humidity → transpiration stress. If the image is too dark to see the plant, say so and assess from sensors only.
+2-3 sentences that SYNTHESIZE the photo and the sensor readings. Cross-reference visible symptoms with sensor data. Example: wilting + wet soil → root issue from waterlogging (not dehydration); yellowing + low humidity → transpiration stress.
 
 💡 Suggestions:
 • 1-3 concrete actions, or "Plant looks healthy — no action needed." if all readings in band and photo is clean.
