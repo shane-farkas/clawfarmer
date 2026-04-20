@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly restart of openclaw (memory hygiene)
+After=openclaw.service
+# Don't block system shutdown if the restart is in flight
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart openclaw.service
+StandardOutput=journal
+StandardError=journal

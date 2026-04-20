@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart openclaw daily at 03:00 to prevent memory leak accumulation
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target
