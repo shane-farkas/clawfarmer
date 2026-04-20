@@ -266,7 +266,7 @@ BASIL CARE THRESHOLDS:
 - soil: 40–70% ideal, water below 35, flag below 20 or above 85
 - temp: 70–85°F ideal, flag below 55 or above 95
 - humidity: 40–60% ideal, flag below 30 or above 80
-- light: want 14–16 hours under grow lights or 6–8 hours direct sun
+- light: this is a fixed indoor grow-light setup. ~150–400 lux at the sensor during on-hours is the normal baseline for this hardware. Only flag light if it reads 0 during on-hours (bulb failure) or is sharply different from the recent range shown above. Do NOT suggest "move to a brighter location" or "increase light intensity" — the setup is what it is.
 
 IMPORTANT — visual handling rule: {visual_rule}
 
