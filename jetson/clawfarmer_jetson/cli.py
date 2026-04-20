@@ -40,6 +40,25 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     _emit(out)
 
 
+def _cmd_rich_analyze(args: argparse.Namespace) -> None:
+    from .analyze import rich_analyze, DEFAULT_MODEL
+
+    # prompt is read from stdin (too large / multi-line for argv)
+    prompt = sys.stdin.read().strip()
+    if not prompt:
+        _emit({"ok": False, "error": "empty prompt — pipe prompt text via stdin"})
+        return
+
+    out = rich_analyze(
+        path=args.image,
+        prompt=prompt,
+        model=args.model or DEFAULT_MODEL,
+        url=args.url,
+        timeout_s=args.timeout,
+    )
+    _emit(out)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="clawfarmer-jetson")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -61,6 +80,17 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Ollama chat endpoint (use /api/chat, not /api/generate, for vision)")
     s.add_argument("--timeout", type=int, default=120, help="Ollama request timeout in seconds")
     s.set_defaults(func=_cmd_analyze)
+
+    s = sub.add_parser("rich-analyze",
+                       help="Run vision model with a custom prompt (from stdin) over an image")
+    s.add_argument("--image", required=True, help="Path to the JPEG to analyze")
+    s.add_argument("--model", default=None,
+                   help="Ollama model name (default: analyze.DEFAULT_MODEL)")
+    s.add_argument("--url", default="http://127.0.0.1:11434/api/chat",
+                   help="Ollama chat endpoint")
+    s.add_argument("--timeout", type=int, default=180,
+                   help="Ollama timeout in seconds (rich prompts can be slower)")
+    s.set_defaults(func=_cmd_rich_analyze)
 
     return p
 

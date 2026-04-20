@@ -57,6 +57,14 @@ SOIL_WET_RAW = int(os.getenv("SOIL_WET_RAW", "12000"))
 # both refresh the dashboard's rich_analysis.md.
 PHOTO_REVIEW_CRON_ID = os.getenv("PHOTO_REVIEW_CRON_ID", "").strip()
 
+# When set to "1", the photo action runs rich analysis on the Jetson (Gemma
+# over the same image + sensor context) and writes last_rich_analysis.md
+# directly. Skips the OpenClaw cron chain entirely — no Together API cost,
+# no sandbox memory leak, no Telegram delivery from this path. Good for
+# dashboard-only operation. When unset, falls back to the OpenClaw cron
+# chain (Kimi/Qwen via Together, gets Telegram as a bonus).
+USE_JETSON_RICH_ANALYSIS = os.getenv("USE_JETSON_RICH_ANALYSIS", "").strip() == "1"
+
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
 TICKER_FILE = WORKSPACE / "memory/basil-ticker.json"
@@ -188,6 +196,120 @@ def _wait_and_capture_review_summary(
         if summary:
             return summary
     return None
+
+
+def _compose_rich_prompt(state: dict) -> str:
+    """Build a single text prompt for the Jetson's vision model that includes
+    sensor context + AGENTS.md thresholds alongside the image. Mirrors the
+    structure the OpenClaw photo-review cron produces."""
+    r = state.get("readings", {}) or {}
+    dr = state.get("day_ranges", {}) or {}
+    hist = state.get("readings_history", []) or []
+
+    def _v(key):
+        return (r.get(key) or {}).get("value")
+
+    def _trend(h_key: str) -> str:
+        values = [h.get(h_key) for h in hist if h.get(h_key) is not None]
+        if len(values) < 2:
+            return "no trend yet"
+        first, last = values[0], values[-1]
+        delta = last - first
+        if abs(delta) < (abs(first) * 0.02):
+            return "stable"
+        return f"{'rising' if delta > 0 else 'falling'} from {first:.1f}"
+
+    def _range(key: str, fmt: str = "{:.1f}") -> str:
+        d = dr.get(key) or {}
+        mn, mx = d.get("min"), d.get("max")
+        if mn is None or mx is None:
+            return "no range yet"
+        return f"{fmt.format(mn)}–{fmt.format(mx)}"
+
+    soil = _v("soil_moisture")
+    temp = _v("temp_f")
+    hum = _v("humidity_pct")
+    lux = _v("lux")
+
+    lp = state.get("last_photo") or {}
+    analyzed_at = lp.get("at") or _now_iso()
+    try:
+        local_time = datetime.fromisoformat(analyzed_at).strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        local_time = "now"
+
+    return f"""You are helping monitor a basil plant. Produce a concise plant check based on the attached image AND the sensor readings below.
+
+CURRENT SENSOR READINGS:
+• soil moisture: {soil:.1f}% VWC (trend: {_trend('soil_moisture')}, today range {_range('soil_moisture')})
+• temperature: {temp:.1f}°F (today range {_range('temp_f')})
+• humidity: {hum:.1f}% RH (today range {_range('humidity_pct')})
+• light: {lux:.0f} lux
+
+BASIL CARE THRESHOLDS:
+- soil: 40–70% ideal, water below 35, flag below 20 or above 85
+- temp: 70–85°F ideal, flag below 55 or above 95
+- humidity: 40–60% ideal, flag below 30 or above 80
+- light: want 14–16 hours under grow lights or 6–8 hours direct sun
+
+Output EXACTLY this structure, 15 lines max, no preamble, no meta-commentary:
+
+🌿 Plant check — {local_time}
+📸 <1-2 sentence paraphrase of what you see in the image>
+
+📊 Last 12h:
+• soil: {soil:.1f}% (trend description, target 40–70%)
+• temp: {temp:.1f}°F (today range, target 70–85°F)
+• humidity: {hum:.1f}% (today range, target 40–60%)
+• light: <note only if unusually low or high>
+
+🔍 Assessment:
+2-3 sentences that SYNTHESIZE the photo and the sensor readings. Cross-reference visible symptoms with sensor data. Example: wilting + wet soil → root issue from waterlogging (not dehydration); yellowing + low humidity → transpiration stress.
+
+💡 Suggestions:
+• 1-3 concrete actions, or "Plant looks healthy — no action needed." if all readings in band and photo is clean.
+
+End at the last suggestion bullet. No signoff, no Telegram tag, no "here is".
+"""
+
+
+def _run_jetson_rich_analyze(remote_image_path: str, prompt: str) -> tuple[str | None, str | None]:
+    """SSH to the Jetson and invoke `clawfarmer_jetson rich-analyze`, piping
+    the prompt over stdin. Returns (text, error) — exactly one is non-None."""
+    argv = [
+        "/usr/bin/ssh",
+        "-i", JETSON_KEY,
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=10",
+        f"{JETSON_USER}@{JETSON_HOST}",
+        f"{JETSON_VENV_PYTHON} -m clawfarmer_jetson rich-analyze "
+        f"--image {remote_image_path}",
+    ]
+    try:
+        r = subprocess.run(
+            argv, input=prompt, capture_output=True, text=True, timeout=240,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "ssh rich-analyze timed out after 240s"
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+
+    if r.returncode != 0:
+        return None, f"ssh/rich-analyze exit {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+
+    try:
+        payload = json.loads(r.stdout.strip())
+    except json.JSONDecodeError as exc:
+        return None, f"bad JSON from jetson: {exc}; out={r.stdout[:300]!r}"
+
+    if not payload.get("ok"):
+        return None, payload.get("error", "rich-analyze ok:false")
+
+    text = (payload.get("rich_analysis") or "").strip()
+    if not text:
+        return None, "rich-analyze returned empty text"
+    return text, None
 
 
 def _archive_rich_analysis(state: dict) -> None:
@@ -662,15 +784,32 @@ def cmd_photo() -> None:
                         _record_error(state, "sidecar-write",
                                       f"{type(exc).__name__}: {exc}")
 
-                    # Before triggering the photo-review cron (which will
-                    # overwrite last_rich_analysis.md), archive the current
-                    # rich analysis to growth-log.md so history accumulates.
+                    # Before we refresh last_rich_analysis.md (either via
+                    # Gemma on Jetson or the OpenClaw cron chain), archive
+                    # the current file to growth-log.md so history accumulates.
                     _archive_rich_analysis(state)
 
-                    # Chain into the rich photo-review cron so every manual
-                    # button press + scheduled capture refreshes the
-                    # dashboard's rich_analysis.md with a fresh synthesis.
-                    if PHOTO_REVIEW_CRON_ID:
+                    if USE_JETSON_RICH_ANALYSIS:
+                        # Compose a prompt with sensor context + AGENTS.md
+                        # thresholds and run Gemma on the Jetson over the
+                        # image we just captured. No Together API, no
+                        # OpenClaw cron, no sandbox — dashboard-only.
+                        prompt = _compose_rich_prompt(state)
+                        remote_image = f"{JETSON_PHOTO_DIR}/{filename}"
+                        text, err = _run_jetson_rich_analyze(remote_image, prompt)
+                        if err:
+                            _record_error(state, "jetson/rich-analyze", err)
+                        elif text:
+                            try:
+                                (WORKSPACE / "memory/last_rich_analysis.md"
+                                 ).write_text(text)
+                                review_triggered = True
+                            except Exception as exc:
+                                _record_error(
+                                    state, "rich-analysis-write",
+                                    f"{type(exc).__name__}: {exc}",
+                                )
+                    elif PHOTO_REVIEW_CRON_ID:
                         trigger_ts = time.time()
                         try:
                             r = subprocess.run(

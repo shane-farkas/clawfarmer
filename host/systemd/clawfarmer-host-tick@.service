@@ -21,6 +21,10 @@ Environment=SOIL_WET_RAW=12000
 # Optional — if set, each successful photo capture triggers this cron job
 # (used to refresh the rich photo-review analysis on every capture).
 Environment=PHOTO_REVIEW_CRON_ID={{PHOTO_REVIEW_CRON_ID}}
+# Set to "1" to run rich analysis on the Jetson (Gemma) instead of via the
+# OpenClaw cron chain (Kimi/Qwen). Saves Together API cost but Telegram
+# stops getting rich plant-check messages (dashboard still updates).
+Environment=USE_JETSON_RICH_ANALYSIS=0
 ExecStart=/usr/local/bin/clawfarmer-host-tick %I
 StandardOutput=journal
 StandardError=journal
