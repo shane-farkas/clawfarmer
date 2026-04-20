@@ -1099,7 +1099,7 @@ def render_index(flash: tuple[str, str] | None = None,
         errors_block=_render_errors(state),
         flash_block=flash_block,
         health_banner=health_banner,
-        ticker_block=_render_ticker_section(),
+        ticker_block="",  # BASIL.X ticker hidden; swap back to _render_ticker_section() to re-enable
         body_class=body_class,
         theme_toggle_label=theme_toggle_label,
     )
