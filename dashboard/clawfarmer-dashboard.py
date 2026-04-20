@@ -480,7 +480,23 @@ def _render_charts(state: dict) -> str:
     history = state.get("readings_history", []) or []
     if not history:
         return '<p class="empty">No history yet — first 15-min sweep will start populating.</p>'
+
+    # Augment each history entry with a computed score so _render_chart can
+    # plot it with the same mini-chart helper used for the sensor series.
+    scored_history = []
+    for h in history:
+        scored_history.append({
+            **h,
+            "score": _score_from_values(
+                h.get("soil_moisture"),
+                h.get("temp_f"),
+                h.get("humidity_pct"),
+            ),
+        })
+
     charts = [
+        _render_chart("Health score", scored_history, "score", "/10",
+                      healthy_band=(8, 10), fmt="{:.0f}"),
         _render_chart("Soil moisture", history, "soil_moisture", "% VWC",
                       healthy_band=(40, 70)),
         _render_chart("Temperature", history, "temp_f", "°F",
@@ -505,6 +521,33 @@ def _load_sidecar(filename: str) -> dict:
         return {}
 
 
+def _bucket(v, alert_lo, alert_hi, healthy_lo, healthy_hi, edge_lo, edge_hi):
+    """Return 3 (alert), 2 (outside healthy), 1 (edge), or 0 (ideal)."""
+    if v is None:
+        return 3
+    if v < alert_lo or v > alert_hi:
+        return 3
+    if v < healthy_lo or v > healthy_hi:
+        return 2
+    if v < edge_lo or v > edge_hi:
+        return 1
+    return 0
+
+
+def _score_from_values(soil: float | None, temp: float | None,
+                       humidity: float | None) -> int:
+    """Pure scoring function — same rubric as the sensor-sweep cron, no staleness
+    check. Used both for live health and for each historical snapshot."""
+    score = 10
+    if soil is not None:
+        score -= _bucket(soil, 20, 85, 35, 70, 45, 65)
+    if temp is not None:
+        score -= _bucket(temp, 55, 95, 65, 85, 68, 82)
+    if humidity is not None:
+        score -= _bucket(humidity, 30, 80, 40, 60, 45, 55)
+    return max(1, min(10, score))
+
+
 def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
     """Return (score, alerts, suggestions) from current readings using the
     same rubric as the 15-min sensor-sweep cron."""
@@ -514,25 +557,12 @@ def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
     humidity = (readings.get("humidity_pct") or {}).get("value")
     lux = (readings.get("lux") or {}).get("value")
 
-    score = 10
+    score = _score_from_values(soil, temp, humidity)
     alerts: list[str] = []
     suggestions: list[str] = []
 
-    def _bucket(v, alert_lo, alert_hi, healthy_lo, healthy_hi, edge_lo, edge_hi):
-        """Return 3 (alert), 2 (outside healthy), 1 (edge), or 0 (ideal)."""
-        if v is None:
-            return 3
-        if v < alert_lo or v > alert_hi:
-            return 3
-        if v < healthy_lo or v > healthy_hi:
-            return 2
-        if v < edge_lo or v > edge_hi:
-            return 1
-        return 0
-
-    # Soil: alert <20 or >85, healthy 35-70, edge <45 or >65
+    # Soil — alerts + suggestions (score already baked in by _score_from_values)
     if soil is not None:
-        score -= _bucket(soil, 20, 85, 35, 70, 45, 65)
         if soil < 20:
             alerts.append(f"⚠️ soil {soil:.1f}% < 20 (critically dry)")
             suggestions.append(f"Water immediately — soil at {soil:.1f}%, target 40–70%")
@@ -544,9 +574,8 @@ def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
         elif soil > 70:
             suggestions.append(f"Hold water — soil at {soil:.1f}%, let it dry below 70%")
 
-    # Humidity: alert <30 or >80, healthy 40-60, edge <45 or >55
+    # Humidity
     if humidity is not None:
-        score -= _bucket(humidity, 30, 80, 40, 60, 45, 55)
         if humidity < 30:
             alerts.append(f"⚠️ humidity {humidity:.1f}% < 30")
             suggestions.append("Raise humidity — humidifier, pebble tray, or group with other plants")
@@ -558,9 +587,8 @@ def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
         elif humidity > 60:
             suggestions.append("Increase airflow — fan or open a window")
 
-    # Temp: alert <55 or >95, healthy 65-85, edge <68 or >82
+    # Temp
     if temp is not None:
-        score -= _bucket(temp, 55, 95, 65, 85, 68, 82)
         if temp < 55:
             alerts.append(f"⚠️ temp {temp:.1f}°F < 55")
             suggestions.append("Move to a warmer spot")
@@ -572,7 +600,7 @@ def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
         elif temp > 85:
             suggestions.append("Move away from heat source or add airflow")
 
-    # Stale data check
+    # Stale data check — collapses score to 1 for the live health card only
     updated_at = state.get("updated_at")
     if updated_at:
         try:
@@ -594,7 +622,6 @@ def _compute_health(state: dict) -> tuple[int, list[str], list[str]]:
         except Exception:
             pass
 
-    score = max(1, min(10, score))
     return score, alerts, suggestions[:3]
 
 
