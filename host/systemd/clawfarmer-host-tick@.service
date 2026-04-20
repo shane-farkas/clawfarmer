@@ -22,9 +22,16 @@ Environment=SOIL_WET_RAW=12000
 # (used to refresh the rich photo-review analysis on every capture).
 Environment=PHOTO_REVIEW_CRON_ID={{PHOTO_REVIEW_CRON_ID}}
 # Set to "1" to run rich analysis on the Jetson (Gemma) instead of via the
-# OpenClaw cron chain (Kimi/Qwen). Saves Together API cost but Telegram
-# stops getting rich plant-check messages (dashboard still updates).
+# OpenClaw cron chain (Kimi/Qwen). No Together API cost. Pair with the
+# TELEGRAM_* envs below to also deliver Gemma's output to Telegram directly.
 Environment=USE_JETSON_RICH_ANALYSIS=0
+# Optional Telegram Bot API delivery — when both are set AND
+# USE_JETSON_RICH_ANALYSIS=1, host-tick posts the rich analysis directly
+# to the configured chat after each photo. Leave empty to skip.
+# Set real values via `systemctl edit clawfarmer-host-tick@photo.service`
+# so they land in /etc/systemd/system/*.service.d/override.conf (never the repo).
+Environment=TELEGRAM_BOT_TOKEN=
+Environment=TELEGRAM_CHAT_ID=
 ExecStart=/usr/local/bin/clawfarmer-host-tick %I
 StandardOutput=journal
 StandardError=journal

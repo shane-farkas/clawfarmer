@@ -25,6 +25,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -59,11 +61,16 @@ PHOTO_REVIEW_CRON_ID = os.getenv("PHOTO_REVIEW_CRON_ID", "").strip()
 
 # When set to "1", the photo action runs rich analysis on the Jetson (Gemma
 # over the same image + sensor context) and writes last_rich_analysis.md
-# directly. Skips the OpenClaw cron chain entirely — no Together API cost,
-# no sandbox memory leak, no Telegram delivery from this path. Good for
-# dashboard-only operation. When unset, falls back to the OpenClaw cron
-# chain (Kimi/Qwen via Together, gets Telegram as a bonus).
+# directly. Skips the OpenClaw cron chain entirely. When unset, falls back
+# to the OpenClaw cron chain (Kimi/Qwen via Together).
 USE_JETSON_RICH_ANALYSIS = os.getenv("USE_JETSON_RICH_ANALYSIS", "").strip() == "1"
+
+# Optional Telegram delivery — if both env vars are set, host-tick posts
+# the rich analysis directly to a Telegram chat via the Bot API after it
+# lands in last_rich_analysis.md. Only engaged in the USE_JETSON_RICH_ANALYSIS
+# path. Token is kept in the systemd override, never in the repo.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 STATE_FILE = WORKSPACE / "memory/sensor-state.json"
 PHOTOS_DIR = WORKSPACE / "photos"
@@ -271,6 +278,40 @@ Output EXACTLY this structure, 15 lines max, no preamble, no meta-commentary:
 
 End at the last suggestion bullet. No signoff, no Telegram tag, no "here is".
 """
+
+
+def _post_to_telegram(text: str) -> str | None:
+    """POST `text` to the configured Telegram chat via the Bot API. Returns
+    None on success or a short error string. No-op (returns None) when the
+    bot token or chat id are not configured."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return None
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    # Telegram limits a message body to 4096 chars. Our rich analyses are
+    # well under that but trim defensively.
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text[:4000],
+        "disable_web_page_preview": True,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        return f"HTTP {exc.code}: {exc.read()[:200].decode('utf-8', 'replace')}"
+    except urllib.error.URLError as exc:
+        return f"URL error: {exc.reason}"
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if not result.get("ok"):
+        return f"Telegram API error: {result.get('description', 'unknown')}"
+    return None
 
 
 def _run_jetson_rich_analyze(remote_image_path: str, prompt: str) -> tuple[str | None, str | None]:
@@ -793,7 +834,7 @@ def cmd_photo() -> None:
                         # Compose a prompt with sensor context + AGENTS.md
                         # thresholds and run Gemma on the Jetson over the
                         # image we just captured. No Together API, no
-                        # OpenClaw cron, no sandbox — dashboard-only.
+                        # OpenClaw cron, no sandbox — local analysis only.
                         prompt = _compose_rich_prompt(state)
                         remote_image = f"{JETSON_PHOTO_DIR}/{filename}"
                         text, err = _run_jetson_rich_analyze(remote_image, prompt)
@@ -809,6 +850,11 @@ def cmd_photo() -> None:
                                     state, "rich-analysis-write",
                                     f"{type(exc).__name__}: {exc}",
                                 )
+                            # Deliver the same text to Telegram via Bot API
+                            # (only if token + chat id are configured).
+                            tg_err = _post_to_telegram(text)
+                            if tg_err:
+                                _record_error(state, "telegram-post", tg_err)
                     elif PHOTO_REVIEW_CRON_ID:
                         trigger_ts = time.time()
                         try:
