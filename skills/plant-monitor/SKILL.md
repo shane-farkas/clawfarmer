@@ -141,12 +141,14 @@ If step 1's JSON has `"ok": false`, or step 2's scp fails, record the error unde
 
 Runs once per day (see `cron/jobs.template.json`).
 
+**Operate silently.** Do not narrate your reasoning, tool-calling plan, file inspection, or progress to the operator. The only operator-facing output from this tick is the optional alert in step 6 — everything else must stay inside the session. No "let me check", no "I'll now append", no running commentary.
+
 1. Gather today's readings from `memory/sensor-state.json` — the latest values plus the day's min/max for temp, humidity, soil moisture.
 2. Identify the most recent photo in `{{PHOTO_SYNC_DIR}}` with a capture timestamp from today.
-3. Analyze the photo for the observation cues listed in `AGENTS.md` — leaf color, posture, flowering, pests, soil surface. Note changes from the prior day's entry when it exists.
+3. Analyze the photo for the observation cues listed in `AGENTS.md` — leaf color, posture, flowering, pests, soil surface. Note changes from the prior day's entry when it exists. **If today's photo is too dark to assess (nighttime / black frame), skip photo analysis entirely — do NOT fall back to an earlier photo or reuse a prior observation. Set the log's photo line to `photo: <filename> — too dark to assess` and make no visual claims in observations.**
 4. Summarize watering events from today (count, timestamps) — read `watering_history[]` in `memory/sensor-state.json`.
 5. Append one dated block to `memory/growth-log.md` using the template below. Do not rewrite prior days.
-6. If the photo analysis surfaces a new failure-mode detection (per `AGENTS.md`), also send a short operator update.
+6. If the photo analysis surfaces a new failure-mode detection (per `AGENTS.md`), also send a short operator update. A "too dark" photo is NOT a detection and does not warrant a message.
 
 ### Growth-log entry template
 
