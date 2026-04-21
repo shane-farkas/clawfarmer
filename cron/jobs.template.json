@@ -114,7 +114,7 @@
       "wakeMode": "now",
       "payload": {
         "kind": "agentTurn",
-        "message": "daily-log. Use the plant-monitor skill. Summarize today's readings, analyze the latest photo using the observation cues in AGENTS.md, and append one dated entry to memory/growth-log.md. Message the operator only if a new failure mode was detected.",
+        "message": "daily-log. Use the plant-monitor skill. Summarize today's readings, analyze the latest photo using the observation cues in AGENTS.md, and append one dated entry to memory/growth-log.md. Operate silently — do NOT narrate reasoning or tool steps to the operator. If today's photo is too dark to assess, skip photo analysis and do NOT fall back to an earlier photo. Message the operator only if a new failure-mode detection is found; a dark photo is not a detection.",
         "thinking": "medium",
         "timeoutSeconds": 600
       },
