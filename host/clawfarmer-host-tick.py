@@ -245,7 +245,7 @@ def _compose_rich_prompt(state: dict) -> str:
     except Exception:
         local_time = "now"
 
-    dark_mode = isinstance(lux, (int, float)) and lux < 20
+    dark_mode = isinstance(lux, (int, float)) and lux < 10
 
     if dark_mode:
         photo_line_instruction = '"Image is too dark to assess — looks like nighttime." (the grow lights are off; do not describe the plant)'
