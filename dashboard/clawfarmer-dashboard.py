@@ -17,8 +17,10 @@ environment variables in the systemd unit.
 
 from __future__ import annotations
 
+import html
 import json
 import os
+import re
 import socket
 import subprocess
 from collections import defaultdict
@@ -27,6 +29,12 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, quote
+
+
+# Photo filenames are produced by jetson capture as YYYY-MM-DDTHH-MM-SS.jpg.
+# Use a strict allowlist for any filename-shaped query input, both to prevent
+# path traversal and to block reflected XSS through the ?photo=... param.
+_PHOTO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.(jpe?g|png)$", re.IGNORECASE)
 
 # Services the dashboard is allowed to kick off via sudo systemctl start.
 # These are whitelisted — nothing else can be triggered over HTTP.
@@ -974,10 +982,11 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
                     '(captured before per-photo analysis was added).</em></div>')
     else:
         obs_text = (obs_raw or "").strip() or "— no observation yet —"
-        obs_html = f'<div class="observation">{obs_text}</div>'
+        obs_html = f'<div class="observation">{html.escape(obs_text)}</div>'
 
     at = _fmt_time(lp.get("at"))
-    model = lp.get("analysis_model", "—")
+    model = html.escape(str(lp.get("analysis_model") or "—"))
+    filename_html = html.escape(filename)
     back_link = ""
     if is_historical:
         back_link = (' <a href="/" class="back-link" '
@@ -1003,7 +1012,7 @@ def _render_photo_block(state: dict, selected_filename: str | None = None) -> st
       <div class="photo-text">
         {visible_obs_html}
         {rich_html}
-        <div class="photo-meta">{filename} · captured {at} · analyzed by {model}{back_link}</div>
+        <div class="photo-meta">{filename_html} · captured {at} · analyzed by {model}{back_link}</div>
       </div>
     </div>
     """
@@ -1053,8 +1062,8 @@ def _render_errors(state: dict) -> str:
     items = []
     for e in list(reversed(errs))[:6]:
         at = _fmt_time(e.get("at"))
-        src = e.get("source", "")
-        msg = (e.get("error") or "")[:200]
+        src = html.escape(e.get("source") or "")
+        msg = html.escape((e.get("error") or "")[:200])
         items.append(f"<li>{at} · <b>{src}</b>: {msg}</li>")
     return f"""
 <section>
@@ -1083,7 +1092,7 @@ def render_index(flash: tuple[str, str] | None = None,
     if flash:
         kind, message = flash
         css = "flash error" if kind == "error" else "flash"
-        flash_block = f'<div class="{css}">{message}</div>'
+        flash_block = f'<div class="{css}">{html.escape(message)}</div>'
     # Health banner always reflects CURRENT state (not the selected photo's era)
     health_banner = _render_health_block(state) if selected_photo is None else ""
     body_class = "theme-bloomberg" if theme == "bloomberg" else "theme-default"
@@ -1126,6 +1135,38 @@ def _trigger_service(service: str) -> tuple[str, str]:
         return "error", f"systemctl exited {result.returncode} for {service}: {err}"
     label = "Photo capture" if "photo" in service else "Sensor sweep"
     return "ok", f"{label} triggered — new readings will appear within ~30-60s. Refresh to see."
+
+
+def _is_same_origin(headers) -> bool:
+    """Same-origin check for state-changing POSTs.
+
+    Browsers attach Origin (and usually Referer) on form submissions and
+    cross-site fetches; only same-origin requests will have a matching host.
+    Requests without either header (curl, scripts, native HTTP clients) are
+    allowed — this is a LAN tool, not an internet-exposed service. The intent
+    is specifically to block a CSRF attempt from another browser tab.
+    """
+    host = (headers.get("Host") or "").lower().strip()
+    if not host:
+        return True  # nothing to compare; let it through
+    for name in ("Origin", "Referer"):
+        raw = headers.get(name)
+        if not raw:
+            continue
+        try:
+            parsed = urlparse(raw)
+        except Exception:
+            return False
+        netloc = (parsed.netloc or "").lower()
+        if not netloc:
+            return False
+        if netloc == host:
+            return True
+        # tolerate :PORT mismatch when the configured PORT matches the host bit
+        if netloc.split(":")[0] == host.split(":")[0]:
+            return True
+        return False
+    return True  # no Origin or Referer headers — likely a CLI client
 
 
 def _parse_theme_cookie(header_value: str | None) -> str:
@@ -1173,7 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
                 if kind and msg:
                     flash = (kind, msg)
                 raw = (q.get("photo") or [""])[0]
-                if raw and "/" not in raw and ".." not in raw:
+                if raw and _PHOTO_NAME_RE.match(raw):
                     selected_photo = raw
             theme = _parse_theme_cookie(self.headers.get("Cookie"))
             try:
@@ -1211,6 +1252,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if not _is_same_origin(self.headers):
+            self._drain_body()
+            self._send(403, "cross-origin POST refused", "text/plain")
+            return
 
         if path == "/theme/toggle":
             self._drain_body()
