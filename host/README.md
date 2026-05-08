@@ -86,8 +86,8 @@ Once the host timers are running, the plant agent's OpenClaw cron jobs should be
 Disable the two photo jobs once the host timers take over:
 
 ```bash
-sudo -u openclaw -H openclaw cron disable 996d17e7-680a-4b42-a077-88d9f4852776  # Morning photo (OpenClaw)
-sudo -u openclaw -H openclaw cron disable 9905fe40-e4b3-4b3f-9b20-90b7993ea289  # Evening photo (OpenClaw)
+sudo -u openclaw -H openclaw cron disable <morning-photo-job-id>
+sudo -u openclaw -H openclaw cron disable <evening-photo-job-id>
 ```
 
-(IDs will differ if you recreated jobs — use `openclaw cron list --all | grep photo` to find yours.)
+Get the IDs with `openclaw cron list --all | grep photo`.

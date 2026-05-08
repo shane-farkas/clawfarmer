@@ -141,11 +141,11 @@ Should print the JSON response — proves the whole chain works.
 Once the above is all green, enable the morning + evening photo jobs you created earlier:
 
 ```bash
-sudo -u openclaw -H openclaw cron enable 996d17e7-680a-4b42-a077-88d9f4852776  # Morning photo
-sudo -u openclaw -H openclaw cron enable 9905fe40-e4b3-4b3f-9b20-90b7993ea289  # Evening photo
+sudo -u openclaw -H openclaw cron enable <morning-photo-job-id>
+sudo -u openclaw -H openclaw cron enable <evening-photo-job-id>
 ```
 
-(Use `openclaw cron list --all | grep photo` to get the IDs if they differ.)
+Get the IDs with `openclaw cron list --all | grep photo`.
 
 ## Troubleshooting
 
